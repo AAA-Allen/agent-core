@@ -1,0 +1,67 @@
+# agent-core
+
+领域中立（domain-neutral）的 Agent 工作流运行时。2026-10-20 从 ICT 晶圆质检项目蒸馏而来：晶圆检测只是首个应用，不进入框架核心类型。
+
+## 它负责什么
+
+框架核心负责：步骤编排、运行标识（`run_id`）、上下文传递、工具注册与逻辑能力检查、显式阻断、异常收敛和结构化执行记录。应用负责：模型、提示词、具体工具实现、业务证据规则、路由阈值和人工复核语义。
+
+差异化方向是**可审查的决策边界**：每一步显式返回 `COMPLETED` 或带原因码的 `BLOCKED`；异常进入 `FAILED`，后续步骤不运行；Trace 记录执行事实，不把模拟预览当真实执行。
+
+## 核心类型
+
+| 类型 | 责任 |
+|---|---|
+| `Step` | 注册唯一名称和执行函数 |
+| `RunContext` | 只读输入、已完成步骤的输出快照及 `run_id` |
+| `StepOutcome` | 显式完成或阻断，阻断必须有原因码 |
+| `WorkflowRunner` | 顺序执行，遇阻断或异常立即停止 |
+| `TraceEvent` / `RunResult` | 保存步骤状态、UTC 开始时间、耗时、错误类型与最终状态 |
+| `Tool` / `ToolRegistry` | 注册唯一工具名，检查调用方声明的能力集合，统一返回成功、阻断或失败 |
+| `tool_step` | 将工具调用包装为工作流步骤，使工具状态进入同一条执行 Trace |
+| `RunStore` | 把已结束的运行（完成、阻断、失败）按 run_id 落盘为单个 JSON 文件，原子写入，可读回 |
+
+输入与步骤输出要求是 JSON 可序列化对象。运行时复制快照，避免后续步骤修改前一步的记录。Trace 不保存异常消息，防止泄露工具返回的敏感内容。
+
+## 最小用法
+
+```python
+from agent_core import Tool, ToolRegistry, WorkflowRunner, tool_step
+
+registry = ToolRegistry()
+registry.register(Tool("normalize", lambda args: {"text": args["text"].strip()}))
+workflow = WorkflowRunner([
+    tool_step("normalize_input", "normalize", registry,
+              lambda context: {"text": context.input["text"]}),
+])
+result = workflow.run({"text": "  hello  "})
+# result.status == RunStatus.COMPLETED
+# result.outputs["normalize_input"]["text"] == "hello"
+```
+
+## 运行测试
+
+```bash
+python -m pytest tests/ -q
+```
+
+## 示例应用
+
+`examples/text_pipeline.py`：纯文本领域的 normalize → validate → analyze → classify 管线。空文本在 `validate` 处 BLOCKED（原因码 `EMPTY_TEXT`）——证明框架核心不含任何业务词汇，同一运行时可跑任意领域。
+
+```bash
+python -m examples.text_pipeline
+```
+
+## 能力边界（尚未做）
+
+- 没有 LLM 自主规划、多 Agent 协商、条件分支、并行节点、人工等待节点
+- 没有运行恢复、取消、超时强制中断、重试、调用预算、幂等键
+- 工具能力集合是**进程内逻辑约束**，不是操作系统沙箱或真正的身份鉴权
+- 持久化只覆盖「已结束运行的落盘与读回」，进程结束后记录不自动保留
+
+当前定位：可复用的基础运行时内核，不是完整通用 Agent 平台。
+
+## 许可
+
+待定（对外发布前必须确定）。未确定前默认保留所有权利。
