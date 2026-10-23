@@ -212,8 +212,9 @@ class Runtime:
     """Synchronous v0.1 graph executor.
 
     This is intentionally separate from WorkflowRunner so the existing linear
-    API remains compatible while Graph Runtime behavior is introduced. It does
-    not provide checkpointing, resume, retries, cancellation, or parallelism.
+    API remains compatible while Graph Runtime behavior is introduced. It
+    supports optional boundary checkpoints and explicit resume; it does not
+    provide retries, cancellation, or parallelism.
     """
 
     def __init__(self, *, max_steps: int = 100, checkpoint_store: Any = None,

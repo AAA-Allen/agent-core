@@ -220,6 +220,52 @@ class GraphRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runtime.resume(graph, Checkpoint("r2", "graph-v1", None, {}, 1, 1))
 
+    def test_resume_from_file_checkpoint_updates_persisted_boundary(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from agent_core import FileCheckpointStore
+
+        graph = (
+            Graph()
+            .add_node("first", lambda ctx: NodeResult.success({"a": 1}, route="next"))
+            .add_node("second", lambda ctx: NodeResult.success({"b": 2}))
+            .set_entry("first").add_edge("first", "second", when="next").compile()
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store = FileCheckpointStore(Path(directory))
+            first_runtime = Runtime(graph_id="graph-v1", checkpoint_store=store, max_steps=1)
+            first = first_runtime.run(graph, {}, run_id="persisted-resume")
+            self.assertEqual(first.status, RunStatus.FAILED)
+            boundary = store.load("persisted-resume")
+            self.assertIsNotNone(boundary)
+            self.assertEqual(boundary.next_node, "second")
+            self.assertEqual(boundary.step_count, 1)
+
+            resumed = Runtime(graph_id="graph-v1", checkpoint_store=store, max_steps=2).resume(
+                graph, boundary
+            )
+            self.assertEqual(resumed.status, RunStatus.COMPLETED)
+            self.assertEqual(resumed.state, {"a": 1, "b": 2})
+            final_checkpoint = store.load("persisted-resume")
+            self.assertIsNotNone(final_checkpoint)
+            self.assertIsNone(final_checkpoint.next_node)
+            self.assertEqual(final_checkpoint.step_count, 2)
+
+    def test_resume_respects_remaining_step_budget(self) -> None:
+        from agent_core import Checkpoint
+
+        calls: list[str] = []
+        graph = (
+            Graph()
+            .add_node("second", lambda ctx: (calls.append("second") or NodeResult.success({"b": 2})))
+            .set_entry("second").compile()
+        )
+        checkpoint = Checkpoint("budget-1", "graph-v1", "second", {"a": 1}, 1, 1)
+        result = Runtime(graph_id="graph-v1", max_steps=1).resume(graph, checkpoint)
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "MAX_STEPS_EXCEEDED")
+        self.assertEqual(calls, [])
+
     def test_checkpoint_store_failure_fails_run_without_retry(self) -> None:
         class BrokenStore:
             def save(self, checkpoint):
