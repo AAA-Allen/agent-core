@@ -310,6 +310,21 @@ class GraphRuntimeTests(unittest.TestCase):
                 ["run.created", "run.running", "run.completed"],
             )
 
+    def test_runtime_store_failure_is_reported_after_execution(self) -> None:
+        class BrokenStore:
+            def save(self, result):
+                raise OSError("storage unavailable")
+
+            def load(self, run_id):
+                return None
+
+        graph = Graph().add_node("done", lambda ctx: NodeResult.success()).set_entry("done").compile()
+        runtime = Runtime(store=BrokenStore())
+        with self.assertRaisesRegex(OSError, "storage unavailable"):
+            runtime.run(graph, {}, run_id="store-failure")
+        from agent_core import LifecycleStatus
+        self.assertEqual(runtime.get_status("store-failure"), LifecycleStatus.COMPLETED)
+
     def test_external_thread_can_request_cooperative_cancellation(self) -> None:
         import threading
 
