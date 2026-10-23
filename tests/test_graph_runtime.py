@@ -140,6 +140,15 @@ class GraphRuntimeTests(unittest.TestCase):
         result = Runtime().run(graph, {"input": "original"})
         self.assertEqual(result.state["input"], "original")
 
+    def test_non_string_update_key_is_rejected_without_state_change(self) -> None:
+        graph = Graph().add_node(
+            "bad", lambda ctx: NodeResult.success({1: "invalid"})
+        ).set_entry("bad").compile()
+        result = Runtime().run(graph, {"input": "original"})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "INVALID_STATE_UPDATE")
+        self.assertEqual(result.state, {"input": "original"})
+
 
 if __name__ == "__main__":
     unittest.main()
