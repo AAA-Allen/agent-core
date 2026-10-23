@@ -74,9 +74,19 @@ result = Runtime().run(graph, input={"text": "hello"})
 图节点只能返回 `NodeResult`，由 Runtime 验证并合并 `updates`。节点状态为
 `NodeStatus.SUCCEEDED`、`BLOCKED` 或 `FAILED`；阻断和失败会停止当前运行。图运行支持条件路由、静态校验、最大执行步数和统一 Trace。`simulated=True` 会保留在最终结果中，不能当作真实工具执行证据。
 
-当前 v0.1 已包含线性图、条件路由、状态增量、Trace、工具适配和最大步数限制；不包含 Checkpoint、恢复、重试、取消、并行、LLM 或多 Agent 调度。
+当前 v0.1 已包含线性图、条件路由、状态增量、Trace、工具适配和最大步数限制；不包含重试、取消、并行、LLM 或多 Agent 调度。
 
 v0.2 的第一步提供 `Checkpoint`、`CheckpointStore`、`InMemoryCheckpointStore` 和 `FileCheckpointStore` 快照协议。将 `checkpoint_store` 传给 `Runtime` 后，每次成功节点边界会保存状态、状态版本、下一节点和执行步数；`load_for()` 会校验快照所属的 `graph_id`。它们只保存可恢复状态，不自动恢复运行，也不承诺 exactly-once 执行。
+
+恢复必须由调用方显式触发。将存储中的非终态 checkpoint 传给兼容的 `Runtime.resume()`，运行会从 `next_node` 继续，并沿用原来的 `run_id`、状态版本和累计步数：
+
+```python
+checkpoint = store.load_for("run-123", "graph")
+if checkpoint is not None and checkpoint.next_node is not None:
+    result = Runtime(graph_id="graph", checkpoint_store=store).resume(graph, checkpoint)
+```
+
+恢复不会重放 checkpoint 之前的节点，也不提供外部副作用的 exactly-once 保证；调用方仍需为工具调用设计幂等策略。
 
 ### 公共 API
 
@@ -105,7 +115,7 @@ assert result.status.value == "COMPLETED"
 ## 后续能力边界
 
 - 没有 LLM 自主规划、多 Agent 协商、并行节点、人工等待节点
-- 没有运行恢复、取消、超时强制中断、重试、调用预算、幂等键
+- 没有取消、超时强制中断、重试、调用预算、幂等键
 - 工具能力集合是**进程内逻辑约束**，不是操作系统沙箱或真正的身份鉴权
 - 持久化只覆盖「已结束运行的落盘与读回」，进程结束后记录不自动保留
 
