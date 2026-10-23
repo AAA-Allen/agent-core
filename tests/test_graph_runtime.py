@@ -216,6 +216,28 @@ class GraphRuntimeTests(unittest.TestCase):
         result = Runtime().run(graph, {"input": "original"})
         self.assertEqual(result.state["input"], "original")
 
+    def test_context_input_is_read_only_and_versions_are_visible(self) -> None:
+        observed: list[tuple[str, int]] = []
+
+        def first(ctx):
+            observed.append((ctx.input["value"], ctx.state_version))
+            with self.assertRaises(TypeError):
+                ctx.input["value"] = "changed"
+            return NodeResult.success({"step": "first"}, route="next")
+
+        def second(ctx):
+            observed.append((ctx.state["step"], ctx.state_version))
+            return NodeResult.success()
+
+        graph = (
+            Graph().add_node("first", first).add_node("second", second)
+            .set_entry("first").add_edge("first", "second", when="next")
+            .compile()
+        )
+        result = Runtime().run(graph, {"value": "original"})
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(observed, [("original", 0), ("first", 1)])
+
     def test_non_string_update_key_is_rejected_without_state_change(self) -> None:
         graph = Graph().add_node(
             "bad", lambda ctx: NodeResult.success({1: "invalid"})
