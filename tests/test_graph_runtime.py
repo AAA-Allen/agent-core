@@ -173,6 +173,20 @@ class GraphRuntimeTests(unittest.TestCase):
         self.assertTrue(node_events)
         self.assertTrue(all(event.execution_id for event in node_events))
 
+    def test_trace_state_versions_follow_successful_commits(self) -> None:
+        graph = (
+            Graph()
+            .add_node("a", lambda ctx: NodeResult.success({"a": 1}, route="next"))
+            .add_node("b", lambda ctx: NodeResult.success({"b": 2}))
+            .set_entry("a")
+            .add_edge("a", "b", when="next")
+            .compile()
+        )
+        result = Runtime().run(graph, {})
+        commits = [event for event in result.trace if event.event_type == "state.committed"]
+        self.assertEqual([event.state_version for event in commits], [1, 2])
+        self.assertEqual(result.trace[0].state_version, 0)
+
     def test_simulated_success_remains_marked(self) -> None:
         graph = Graph().add_node(
             "demo", lambda ctx: NodeResult.success(simulated=True)
