@@ -48,6 +48,19 @@ class GraphRuntimeTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             Runtime().run(Graph(), {})
 
+    def test_multiple_default_edges_are_rejected_at_compile(self) -> None:
+        graph = (
+            Graph()
+            .add_node("a", lambda ctx: NodeResult.success())
+            .add_node("b", lambda ctx: NodeResult.success())
+            .add_node("c", lambda ctx: NodeResult.success())
+            .set_entry("a")
+            .add_edge("a", "b")
+            .add_edge("a", "c")
+        )
+        with self.assertRaisesRegex(ValueError, "multiple default edges"):
+            graph.compile()
+
     def test_node_result_rejects_invalid_status_combinations(self) -> None:
         with self.assertRaises(TypeError):
             NodeResult(status="SUCCEEDED")

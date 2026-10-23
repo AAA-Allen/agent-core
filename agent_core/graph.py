@@ -95,6 +95,11 @@ class Graph:
         for edge in self._edges:
             if edge.source not in self._nodes or edge.target not in self._nodes:
                 raise ValueError("edge references an unknown node")
+        for node_id in self._nodes:
+            defaults = [edge for edge in self._edges
+                        if edge.source == node_id and edge.when is None]
+            if len(defaults) > 1:
+                raise ValueError(f"multiple default edges from node: {node_id}")
 
         reachable = {self._entry}
         changed = True
