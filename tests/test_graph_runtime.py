@@ -127,6 +127,18 @@ class GraphRuntimeTests(unittest.TestCase):
             self.assertEqual(result.reason_code, reason)
             self.assertEqual(calls, [])
 
+    def test_blocked_and_failed_updates_are_not_committed(self) -> None:
+        for node_result, expected_status in (
+            (NodeResult(NodeStatus.BLOCKED, {"leak": True}, reason_code="STOP"), RunStatus.BLOCKED),
+            (NodeResult(NodeStatus.FAILED, {"leak": True}, reason_code="ERROR"), RunStatus.FAILED),
+        ):
+            graph = Graph().add_node(
+                "stop", lambda ctx, result=node_result: result
+            ).set_entry("stop").compile()
+            result = Runtime().run(graph, {"input": "original"})
+            self.assertEqual(result.status, expected_status)
+            self.assertEqual(result.state, {"input": "original"})
+
     def test_node_exception_is_failed_without_downstream_execution(self) -> None:
         calls: list[str] = []
 
