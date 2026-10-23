@@ -6,6 +6,16 @@ from agent_core import Graph, NodeResult, NodeStatus, RunStatus, Runtime
 
 
 class GraphRuntimeTests(unittest.TestCase):
+    def test_node_result_rejects_invalid_status_combinations(self) -> None:
+        with self.assertRaises(TypeError):
+            NodeResult(status="SUCCEEDED")
+        with self.assertRaises(ValueError):
+            NodeResult(NodeStatus.SUCCEEDED, reason_code="unexpected")
+        with self.assertRaises(ValueError):
+            NodeResult(NodeStatus.BLOCKED)
+        with self.assertRaises(ValueError):
+            NodeResult(NodeStatus.FAILED, route="next", reason_code="failed")
+
     def test_linear_graph_executes_in_order_and_merges_updates(self) -> None:
         calls: list[str] = []
 
