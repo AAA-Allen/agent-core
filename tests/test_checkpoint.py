@@ -47,6 +47,14 @@ class CheckpointTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "graph_id does not match"):
             store.load_for("run-1", "graph-v2")
 
+    def test_checkpoint_json_shape_roundtrips_and_rejects_unknown_schema(self) -> None:
+        checkpoint = Checkpoint("run-1", "graph-v1", "next", {"value": 1}, 2, 3)
+        self.assertEqual(Checkpoint.from_dict(checkpoint.to_dict()), checkpoint)
+        payload = checkpoint.to_dict()
+        payload["schema_version"] = 2
+        with self.assertRaisesRegex(ValueError, "unsupported checkpoint"):
+            Checkpoint.from_dict(payload)
+
 
 if __name__ == "__main__":
     unittest.main()

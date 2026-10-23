@@ -22,6 +22,7 @@ class Checkpoint:
     state: Mapping[str, Any]
     state_version: int
     step_count: int
+    schema_version: int = 1
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)
@@ -35,7 +36,33 @@ class Checkpoint:
             raise ValueError("state_version must be a nonnegative integer")
         if not isinstance(self.step_count, int) or isinstance(self.step_count, bool) or self.step_count < 0:
             raise ValueError("step_count must be a nonnegative integer")
+        if self.schema_version != 1:
+            raise ValueError("unsupported checkpoint schema_version")
         object.__setattr__(self, "state", _json_snapshot(self.state))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "graph_id": self.graph_id,
+            "next_node": self.next_node,
+            "state": _json_snapshot(self.state),
+            "state_version": self.state_version,
+            "step_count": self.step_count,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "Checkpoint":
+        if not isinstance(payload, Mapping):
+            raise ValueError("checkpoint payload must be an object")
+        required = {"schema_version", "run_id", "graph_id", "next_node", "state", "state_version", "step_count"}
+        if not required <= payload.keys():
+            raise ValueError("checkpoint payload is missing required fields")
+        return cls(
+            payload["run_id"], payload["graph_id"], payload["next_node"],
+            payload["state"], payload["state_version"], payload["step_count"],
+            payload["schema_version"],
+        )
 
 
 class CheckpointStore(Protocol):
@@ -63,6 +90,7 @@ class InMemoryCheckpointStore:
         self._records[checkpoint.run_id] = Checkpoint(
             checkpoint.run_id, checkpoint.graph_id, checkpoint.next_node,
             checkpoint.state, checkpoint.state_version, checkpoint.step_count,
+            checkpoint.schema_version,
         )
 
     def load(self, run_id: str) -> Checkpoint | None:
@@ -73,6 +101,7 @@ class InMemoryCheckpointStore:
         return Checkpoint(
             checkpoint.run_id, checkpoint.graph_id, checkpoint.next_node,
             checkpoint.state, checkpoint.state_version, checkpoint.step_count,
+            checkpoint.schema_version,
         )
 
     def load_for(self, run_id: str, graph_id: str) -> Checkpoint | None:
