@@ -216,6 +216,19 @@ class GraphRuntimeTests(unittest.TestCase):
         self.assertEqual(started.state_version, 1)
         self.assertEqual(committed.state_version, 2)
 
+    def test_runtime_exposes_lifecycle_status_and_events(self) -> None:
+        graph = Graph().add_node("done", lambda ctx: NodeResult.success()).set_entry("done").compile()
+        runtime = Runtime()
+        result = runtime.run(graph, {}, run_id="lifecycle-run")
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        from agent_core import LifecycleStatus
+        self.assertEqual(runtime.get_status("lifecycle-run"), LifecycleStatus.COMPLETED)
+        self.assertEqual(
+            [event.event_type for event in runtime.get_lifecycle_events("lifecycle-run")],
+            ["run.running", "run.completed"],
+        )
+        self.assertIsNone(runtime.get_status("unknown-run"))
+
     def test_resume_rejects_incompatible_or_terminal_checkpoint(self) -> None:
         from agent_core import Checkpoint
 

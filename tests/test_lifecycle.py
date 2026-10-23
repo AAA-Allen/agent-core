@@ -39,6 +39,16 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid lifecycle transition"):
             lifecycle.transition(LifecycleStatus.RUNNING)
 
+    def test_explicit_resume_is_the_only_terminal_reentry(self) -> None:
+        lifecycle = RunLifecycle("run-1")
+        lifecycle.transition(LifecycleStatus.RUNNING)
+        lifecycle.transition(LifecycleStatus.FAILED, reason_code="MAX_STEPS_EXCEEDED")
+        event = lifecycle.resume()
+        self.assertEqual(event.event_type, "run.resumed")
+        self.assertEqual(lifecycle.status, LifecycleStatus.RUNNING)
+        with self.assertRaisesRegex(ValueError, "cannot resume"):
+            RunLifecycle("run-2").resume()
+
 
 if __name__ == "__main__":
     unittest.main()

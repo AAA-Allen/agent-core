@@ -105,5 +105,26 @@ class RunLifecycle:
         self._events.append(event)
         return event
 
+    def resume(self) -> LifecycleEvent:
+        """Start an explicit recovery attempt from a resumable terminal run."""
+        if self._status not in {LifecycleStatus.FAILED, LifecycleStatus.BLOCKED}:
+            raise ValueError(
+                f"run cannot resume from lifecycle status: {self._status.value}"
+            )
+        previous = self._status
+        self._status = LifecycleStatus.RUNNING
+        event = LifecycleEvent(
+            run_id=self.run_id,
+            sequence=len(self._events) + 1,
+            event_id=uuid4().hex,
+            event_type="run.resumed",
+            from_status=previous,
+            to_status=LifecycleStatus.RUNNING,
+            occurred_at=datetime.now(timezone.utc).isoformat(),
+            reason_code="RESUME",
+        )
+        self._events.append(event)
+        return event
+
 
 __all__ = ["LifecycleEvent", "LifecycleStatus", "RunLifecycle"]

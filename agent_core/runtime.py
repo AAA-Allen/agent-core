@@ -18,6 +18,7 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from .persistence import RunStore
+    from .lifecycle import LifecycleEvent, LifecycleStatus, RunLifecycle
 
 
 class RunStatus(str, Enum):
@@ -231,11 +232,19 @@ class Runtime:
             raise ValueError("graph_id must be a nonempty string")
         self._checkpoint_store = checkpoint_store
         self._graph_id = graph_id
+        self._lifecycles: dict[str, "RunLifecycle"] = {}
 
     def run(self, graph: Any, input: Mapping[str, Any], *, run_id: str | None = None) -> RunResult:
         """Execute a compiled graph synchronously until a terminal result."""
         identity = uuid4().hex if run_id is None else run_id
-        return self._execute(graph, input, run_id=identity)
+        lifecycle = self._begin_lifecycle(identity)
+        try:
+            result = self._execute(graph, input, run_id=identity)
+        except Exception:
+            self._finish_lifecycle(lifecycle, RunStatus.FAILED, reason_code="RUNTIME_EXCEPTION")
+            raise
+        self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
+        return result
 
     def resume(self, graph: Any, checkpoint: Any) -> RunResult:
         """Continue from a compatible checkpoint at its next node."""
@@ -252,12 +261,59 @@ class Runtime:
             raise ValueError("checkpoint has no next_node to resume")
         if checkpoint.next_node not in graph.nodes:
             raise ValueError("checkpoint next_node does not exist in graph")
-        return self._execute(
-            graph, checkpoint.state, run_id=checkpoint.run_id,
-            initial_state=checkpoint.state, current=checkpoint.next_node,
-            state_version=checkpoint.state_version,
-            step_offset=checkpoint.step_count,
-        )
+        lifecycle = self._lifecycles.get(checkpoint.run_id)
+        if lifecycle is None:
+            lifecycle = self._begin_lifecycle(checkpoint.run_id)
+        else:
+            lifecycle.resume()
+        try:
+            result = self._execute(
+                graph, checkpoint.state, run_id=checkpoint.run_id,
+                initial_state=checkpoint.state, current=checkpoint.next_node,
+                state_version=checkpoint.state_version,
+                step_offset=checkpoint.step_count,
+            )
+        except Exception:
+            self._finish_lifecycle(lifecycle, RunStatus.FAILED, reason_code="RUNTIME_EXCEPTION")
+            raise
+        self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
+        return result
+
+    def get_status(self, run_id: str):
+        """Return the known lifecycle status, or ``None`` for an unknown run."""
+        from .lifecycle import LifecycleStatus
+
+        _validate_run_id(run_id)
+        lifecycle = self._lifecycles.get(run_id)
+        return None if lifecycle is None else lifecycle.status
+
+    def get_lifecycle_events(self, run_id: str) -> tuple["LifecycleEvent", ...]:
+        """Return lifecycle events for a known run in sequence order."""
+        _validate_run_id(run_id)
+        lifecycle = self._lifecycles.get(run_id)
+        return () if lifecycle is None else lifecycle.events
+
+    def _begin_lifecycle(self, run_id: str):
+        from .lifecycle import RunLifecycle, LifecycleStatus
+
+        _validate_run_id(run_id)
+        if run_id in self._lifecycles:
+            raise ValueError("run_id already has a lifecycle")
+        lifecycle = RunLifecycle(run_id)
+        lifecycle.transition(LifecycleStatus.RUNNING)
+        self._lifecycles[run_id] = lifecycle
+        return lifecycle
+
+    @staticmethod
+    def _finish_lifecycle(lifecycle: Any, status: RunStatus, *, reason_code: str | None) -> None:
+        from .lifecycle import LifecycleStatus
+
+        target = {
+            RunStatus.COMPLETED: LifecycleStatus.COMPLETED,
+            RunStatus.BLOCKED: LifecycleStatus.BLOCKED,
+            RunStatus.FAILED: LifecycleStatus.FAILED,
+        }[status]
+        lifecycle.transition(target, reason_code=reason_code)
 
     def _execute(
         self, graph: Any, input: Mapping[str, Any], *, run_id: str,
