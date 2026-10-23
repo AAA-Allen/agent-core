@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 
 from agent_core import (
+    Graph,
+    NodeResult,
     RunContext,
     RunResult,
     RunStatus,
@@ -147,6 +149,35 @@ class WorkflowRunnerPersistenceTests(unittest.TestCase):
         workflow.run({"x": 1}, run_id="no-store")
         self.assertFalse((Path(self._tmp.name) / "no-store.json").exists())
         self.assertEqual(self.store.list_runs(), [])
+
+
+class GraphRuntimePersistenceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.store = RunStore(Path(self._tmp.name))
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_graph_result_roundtrips_state_trace_and_simulation_flag(self) -> None:
+        from agent_core import Runtime
+
+        graph = Graph().add_node(
+            "demo", lambda ctx: NodeResult.success({"answer": "preview"}, simulated=True)
+        ).set_entry("demo").compile()
+        result = Runtime().run(graph, {}, run_id="graph-preview")
+
+        path = self.store.save(result)
+        loaded = self.store.load("graph-preview")
+
+        self.assertTrue(path.is_file())
+        self.assertEqual(loaded, result)
+        self.assertEqual(loaded.state["answer"], "preview")
+        self.assertTrue(loaded.simulated)
+        self.assertEqual(
+            [event.event_type for event in loaded.trace],
+            [event.event_type for event in result.trace],
+        )
 
 
 if __name__ == "__main__":
