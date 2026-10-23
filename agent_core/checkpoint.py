@@ -43,6 +43,8 @@ class CheckpointStore(Protocol):
 
     def load(self, run_id: str) -> Checkpoint | None: ...
 
+    def load_for(self, run_id: str, graph_id: str) -> Checkpoint | None: ...
+
     def delete(self, run_id: str) -> None: ...
 
 
@@ -72,6 +74,16 @@ class InMemoryCheckpointStore:
             checkpoint.run_id, checkpoint.graph_id, checkpoint.next_node,
             checkpoint.state, checkpoint.state_version, checkpoint.step_count,
         )
+
+    def load_for(self, run_id: str, graph_id: str) -> Checkpoint | None:
+        if not isinstance(graph_id, str) or not graph_id.strip():
+            raise ValueError("graph_id must be a nonempty string")
+        checkpoint = self.load(run_id)
+        if checkpoint is None:
+            return None
+        if checkpoint.graph_id != graph_id:
+            raise ValueError("checkpoint graph_id does not match requested graph")
+        return checkpoint
 
     def delete(self, run_id: str) -> None:
         _validate_run_id(run_id)

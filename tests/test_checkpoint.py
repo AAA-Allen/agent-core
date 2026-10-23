@@ -40,6 +40,13 @@ class CheckpointTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot move backwards"):
             store.save(Checkpoint("run-1", "graph-v1", "old", {}, 1, 1))
 
+    def test_memory_store_checks_graph_compatibility(self) -> None:
+        store = InMemoryCheckpointStore()
+        store.save(Checkpoint("run-1", "graph-v1", "next", {}, 1, 1))
+        self.assertIsNotNone(store.load_for("run-1", "graph-v1"))
+        with self.assertRaisesRegex(ValueError, "graph_id does not match"):
+            store.load_for("run-1", "graph-v2")
+
 
 if __name__ == "__main__":
     unittest.main()
