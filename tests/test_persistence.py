@@ -62,6 +62,20 @@ class RunStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.save(_sample_result("nested/name"))
 
+    def test_corrupt_json_is_reported_as_invalid_run_record(self) -> None:
+        path = self.store.directory / "broken.json"
+        self.store.directory.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not-json", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "invalid run record"):
+            self.store.load("broken")
+
+    def test_missing_required_record_field_is_reported_as_invalid_run_record(self) -> None:
+        path = self.store.directory / "missing.json"
+        self.store.directory.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"run_id": "missing", "status": "COMPLETED"}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "invalid run record"):
+            self.store.load("missing")
+
     def test_list_runs_sorted(self) -> None:
         self.store.save(_sample_result("run-b"))
         self.store.save(_sample_result("run-a"))

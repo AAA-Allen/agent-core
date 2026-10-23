@@ -45,7 +45,11 @@ class RunStore:
         target = self._directory / f"{run_id}.json"
         if not target.is_file():
             return None
-        return _dict_to_result(json.loads(target.read_text(encoding="utf-8")))
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            return _dict_to_result(payload)
+        except (OSError, json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
+            raise ValueError("invalid run record") from exc
 
     def list_runs(self) -> list[str]:
         """Return saved run_ids in filename order."""
@@ -68,6 +72,13 @@ def _result_to_dict(result: RunResult) -> dict:
 
 
 def _dict_to_result(payload: dict) -> RunResult:
+    if not isinstance(payload, dict):
+        raise TypeError("run record must be an object")
+    required = {"run_id", "status", "outputs", "trace"}
+    if not required <= payload.keys():
+        raise KeyError("missing run record field")
+    if not isinstance(payload["trace"], list):
+        raise TypeError("trace must be a list")
     trace = tuple(
         TraceEvent(
             run_id=event["run_id"],
