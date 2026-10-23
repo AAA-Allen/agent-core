@@ -4,7 +4,7 @@
 
 ## Baseline
 
-- 实际测试基线：115 passed（生命周期状态机接入后）
+- 实际测试基线：127 passed（生命周期持久化与恢复历史接入后）
 - 执行模型：同步、单进程、节点顺序执行
 - 现有 `RunStore`：保存完成后的 `RunResult`
 - 现有 `CheckpointStore`：保存节点边界快照，显式 `Runtime.resume()`
@@ -27,7 +27,7 @@
 
 ## Known Limits
 
-- 生命周期事件目前只在 Runtime 实例内存中保留，尚未接入持久化 Store。
+- 生命周期事件同时保存在 Runtime 内存和 RunStore 事件日志中。
 - 同步 Python 节点不能被安全强制中断；取消和超时需要协作式边界。
 - 取消请求在节点开始前或节点返回后确认；节点内部可通过 `ctx.cancel_requested` 协作检查。
 - `timeout_seconds` 在节点边界确认，超时返回 `CANCELED`/`TIMEOUT`；无法强制中断同步节点。
