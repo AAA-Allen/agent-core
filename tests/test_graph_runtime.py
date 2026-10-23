@@ -252,6 +252,31 @@ class GraphRuntimeTests(unittest.TestCase):
         self.assertEqual(result.trace[-1].event_type, "run.canceled")
         self.assertFalse(runtime.cancel("cancel-run"))
 
+    def test_timeout_stops_at_node_boundary_as_canceled(self) -> None:
+        import time
+
+        calls: list[str] = []
+        graph = (
+            Graph()
+            .add_node("slow", lambda ctx: (calls.append("slow") or time.sleep(0.01) or NodeResult.success({}, route="next")))
+            .add_node("second", lambda ctx: calls.append("second") or NodeResult.success())
+            .set_entry("slow").add_edge("slow", "second", when="next").compile()
+        )
+        runtime = Runtime(timeout_seconds=0.001)
+        result = runtime.run(graph, {}, run_id="timeout-run")
+        from agent_core import LifecycleStatus
+        self.assertEqual(result.status, RunStatus.CANCELED)
+        self.assertEqual(result.reason_code, "TIMEOUT")
+        self.assertEqual(calls, ["slow"])
+        self.assertEqual(runtime.get_status("timeout-run"), LifecycleStatus.CANCELED)
+        self.assertEqual(result.trace[-1].event_type, "run.canceled")
+
+    def test_timeout_must_be_positive_when_provided(self) -> None:
+        with self.assertRaises(ValueError):
+            Runtime(timeout_seconds=0)
+        with self.assertRaises(ValueError):
+            Runtime(timeout_seconds=True)
+
     def test_resume_rejects_incompatible_or_terminal_checkpoint(self) -> None:
         from agent_core import Checkpoint
 

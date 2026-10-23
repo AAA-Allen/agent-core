@@ -221,10 +221,17 @@ class Runtime:
     """
 
     def __init__(self, *, max_steps: int = 100, checkpoint_store: Any = None,
-                 graph_id: str = "graph") -> None:
+                 graph_id: str = "graph", timeout_seconds: float | None = None) -> None:
         if not isinstance(max_steps, int) or isinstance(max_steps, bool) or max_steps <= 0:
             raise ValueError("max_steps must be a positive integer")
         self.max_steps = max_steps
+        if timeout_seconds is not None and (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be positive when provided")
+        self.timeout_seconds = timeout_seconds
         if checkpoint_store is not None and not all(
             callable(getattr(checkpoint_store, name, None))
             for name in ("save", "load", "delete")
@@ -315,6 +322,13 @@ class Runtime:
         with self._cancel_lock:
             return run_id in self._cancel_requests
 
+    def _stop_reason(self, run_id: str, started_monotonic: float) -> str | None:
+        if self._is_cancel_requested(run_id):
+            return "CANCEL_REQUESTED"
+        if self.timeout_seconds is not None and monotonic() - started_monotonic >= self.timeout_seconds:
+            return "TIMEOUT"
+        return None
+
     def _begin_lifecycle(self, run_id: str):
         from .lifecycle import RunLifecycle, LifecycleStatus
 
@@ -360,6 +374,7 @@ class Runtime:
         trace: list[TraceEvent] = []
         sequence = 0
         simulated = False
+        started_monotonic = monotonic()
 
         def emit(event_type: str, *, node_id: str | None = None,
                  execution_id: str | None = None, status: str | None = None,
@@ -385,11 +400,12 @@ class Runtime:
                              tuple(trace), current, "MAX_STEPS_EXCEEDED",
                              _json_snapshot(state), simulated)
         for step_number in range(remaining_steps):
-            if self._is_cancel_requested(identity):
+            stop_reason = self._stop_reason(identity, started_monotonic)
+            if stop_reason is not None:
                 emit("run.canceled", node_id=current, status=RunStatus.CANCELED.value,
-                     reason_code="CANCEL_REQUESTED")
+                     reason_code=stop_reason)
                 return RunResult(identity, RunStatus.CANCELED, _json_snapshot(state),
-                                 tuple(trace), current, "CANCEL_REQUESTED",
+                                 tuple(trace), current, stop_reason,
                                  _json_snapshot(state), simulated)
             node = graph.nodes[current]
             execution_id = uuid4().hex
@@ -402,11 +418,12 @@ class Runtime:
                     _cancel_requested=lambda: self._is_cancel_requested(identity),
                 )
                 result = node.execute(context)
-                if self._is_cancel_requested(identity):
+                stop_reason = self._stop_reason(identity, started_monotonic)
+                if stop_reason is not None:
                     emit("run.canceled", node_id=current, execution_id=execution_id,
-                         status=RunStatus.CANCELED.value, reason_code="CANCEL_REQUESTED")
+                         status=RunStatus.CANCELED.value, reason_code=stop_reason)
                     return RunResult(identity, RunStatus.CANCELED, _json_snapshot(state),
-                                     tuple(trace), current, "CANCEL_REQUESTED",
+                                     tuple(trace), current, stop_reason,
                                      _json_snapshot(state), simulated)
                 if not isinstance(result, NodeResult):
                     emit("node.failed", node_id=current, execution_id=execution_id,
