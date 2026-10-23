@@ -6,6 +6,38 @@ from agent_core import Graph, NodeResult, NodeStatus, RunStatus, Runtime
 
 
 class GraphRuntimeTests(unittest.TestCase):
+    def test_default_edge_matches_only_without_a_route(self) -> None:
+        calls: list[str] = []
+        graph = (
+            Graph()
+            .add_node("start", lambda ctx: NodeResult.success())
+            .add_node("finish", lambda ctx: (calls.append("finish") or NodeResult.success()))
+            .set_entry("start")
+            .add_edge("start", "finish")
+            .compile()
+        )
+        result = Runtime().run(graph, {})
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(calls, ["finish"])
+
+    def test_unreachable_nodes_are_rejected(self) -> None:
+        graph = (
+            Graph()
+            .add_node("entry", lambda ctx: NodeResult.success())
+            .add_node("orphan", lambda ctx: NodeResult.success())
+            .set_entry("entry")
+        )
+        with self.assertRaises(ValueError):
+            graph.compile()
+
+    def test_runtime_requires_compiled_graph_and_positive_step_limit(self) -> None:
+        with self.assertRaises(ValueError):
+            Runtime(max_steps=0)
+        with self.assertRaises(ValueError):
+            Runtime(max_steps=True)
+        with self.assertRaises(TypeError):
+            Runtime().run(Graph(), {})
+
     def test_node_result_rejects_invalid_status_combinations(self) -> None:
         with self.assertRaises(TypeError):
             NodeResult(status="SUCCEEDED")
