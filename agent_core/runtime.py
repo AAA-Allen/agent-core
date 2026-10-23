@@ -212,7 +212,8 @@ class Runtime:
     """Synchronous v0.1 graph executor.
 
     This is intentionally separate from WorkflowRunner so the existing linear
-    API remains compatible while Graph Runtime behavior is introduced.
+    API remains compatible while Graph Runtime behavior is introduced. It does
+    not provide checkpointing, resume, retries, cancellation, or parallelism.
     """
 
     def __init__(self, *, max_steps: int = 100) -> None:
@@ -221,6 +222,7 @@ class Runtime:
         self.max_steps = max_steps
 
     def run(self, graph: Any, input: Mapping[str, Any], *, run_id: str | None = None) -> RunResult:
+        """Execute a compiled graph synchronously until a terminal result."""
         from .graph import NodeContext, CompiledGraph
         from .results import NodeResult, NodeStatus
 

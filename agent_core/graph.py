@@ -15,6 +15,7 @@ NodeCallable = Callable[["NodeContext"], NodeResult]
 
 @dataclass(frozen=True)
 class NodeContext:
+    """Read-only per-node execution context."""
     run_id: str
     node_id: str
     execution_id: str
@@ -46,6 +47,7 @@ class Edge:
 
 @dataclass(frozen=True)
 class CompiledGraph:
+    """Immutable graph snapshot produced by :meth:`Graph.compile`."""
     nodes: Mapping[str, Node]
     edges: tuple[Edge, ...]
     entry: str
@@ -55,6 +57,7 @@ class CompiledGraph:
 
 
 class Graph:
+    """Mutable graph builder; call ``compile`` before execution."""
     def __init__(self) -> None:
         self._nodes: dict[str, Node] = {}
         self._edges: list[Edge] = []

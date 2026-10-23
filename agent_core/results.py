@@ -15,7 +15,12 @@ class NodeStatus(str, Enum):
 
 @dataclass(frozen=True)
 class NodeResult:
-    """The only value a graph node may return to the runtime."""
+    """The only value a graph node may return to the runtime.
+
+    ``updates`` is committed only for ``SUCCEEDED`` results. ``simulated`` is
+    retained in the run result and never implies that an external side effect
+    actually occurred.
+    """
 
     status: NodeStatus
     updates: Mapping[str, Any] = field(default_factory=dict)
