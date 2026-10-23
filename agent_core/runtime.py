@@ -216,15 +216,26 @@ class Runtime:
     not provide checkpointing, resume, retries, cancellation, or parallelism.
     """
 
-    def __init__(self, *, max_steps: int = 100) -> None:
+    def __init__(self, *, max_steps: int = 100, checkpoint_store: Any = None,
+                 graph_id: str = "graph") -> None:
         if not isinstance(max_steps, int) or isinstance(max_steps, bool) or max_steps <= 0:
             raise ValueError("max_steps must be a positive integer")
         self.max_steps = max_steps
+        if checkpoint_store is not None and not all(
+            callable(getattr(checkpoint_store, name, None))
+            for name in ("save", "load", "delete")
+        ):
+            raise TypeError("checkpoint_store must implement save, load and delete")
+        if not isinstance(graph_id, str) or not graph_id.strip():
+            raise ValueError("graph_id must be a nonempty string")
+        self._checkpoint_store = checkpoint_store
+        self._graph_id = graph_id
 
     def run(self, graph: Any, input: Mapping[str, Any], *, run_id: str | None = None) -> RunResult:
         """Execute a compiled graph synchronously until a terminal result."""
         from .graph import NodeContext, CompiledGraph
         from .results import NodeResult, NodeStatus
+        from .checkpoint import Checkpoint
 
         if not isinstance(graph, CompiledGraph):
             raise TypeError("graph must be a compiled Graph")
@@ -316,6 +327,15 @@ class Runtime:
 
             edges = graph.outgoing(current)
             if not edges:
+                checkpoint_error = self._save_checkpoint(
+                    Checkpoint(identity, self._graph_id, None, state, state_version, _ + 1)
+                )
+                if checkpoint_error is not None:
+                    emit("run.failed", node_id=current, status=RunStatus.FAILED.value,
+                         reason_code=checkpoint_error)
+                    return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
+                                     tuple(trace), current, checkpoint_error,
+                                     _json_snapshot(state), simulated)
                 emit("run.completed", node_id=current, status=RunStatus.COMPLETED.value)
                 return RunResult(identity, RunStatus.COMPLETED, _json_snapshot(state),
                                  tuple(trace), None, None, _json_snapshot(state), simulated)
@@ -331,10 +351,29 @@ class Runtime:
                 emit("run.failed", node_id=current, status=RunStatus.FAILED.value, reason_code=code)
                 return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
                                  tuple(trace), current, code, _json_snapshot(state), simulated)
+            next_node = matches[0].target
+            checkpoint_error = self._save_checkpoint(
+                Checkpoint(identity, self._graph_id, next_node, state, state_version, _ + 1)
+            )
+            if checkpoint_error is not None:
+                emit("run.failed", node_id=current, status=RunStatus.FAILED.value,
+                     reason_code=checkpoint_error)
+                return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
+                                 tuple(trace), current, checkpoint_error,
+                                 _json_snapshot(state), simulated)
             emit("route.selected", node_id=current, status=RunStatus.COMPLETED.value)
-            current = matches[0].target
+            current = next_node
 
         code = "MAX_STEPS_EXCEEDED"
         emit("run.failed", node_id=current, status=RunStatus.FAILED.value, reason_code=code)
         return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
                          tuple(trace), current, code, _json_snapshot(state), simulated)
+
+    def _save_checkpoint(self, checkpoint: Any) -> str | None:
+        if self._checkpoint_store is None:
+            return None
+        try:
+            self._checkpoint_store.save(checkpoint)
+        except Exception:
+            return "CHECKPOINT_SAVE_FAILED"
+        return None

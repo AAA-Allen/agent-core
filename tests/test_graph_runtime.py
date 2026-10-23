@@ -127,6 +127,38 @@ class GraphRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             NodeResult(NodeStatus.FAILED, route="next", reason_code="failed")
 
+    def test_runtime_saves_checkpoint_after_successful_boundary(self) -> None:
+        from agent_core import InMemoryCheckpointStore
+
+        store = InMemoryCheckpointStore()
+        graph = Graph().add_node("done", lambda ctx: NodeResult.success({"done": True}))\
+            .set_entry("done").compile()
+        result = Runtime(checkpoint_store=store, graph_id="graph-v1").run(graph, {}, run_id="checkpointed")
+        checkpoint = store.load("checkpointed")
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(checkpoint.next_node, None)
+        self.assertEqual(checkpoint.state, {"done": True})
+        self.assertEqual(checkpoint.state_version, 1)
+        self.assertEqual(checkpoint.step_count, 1)
+
+    def test_checkpoint_store_failure_fails_run_without_retry(self) -> None:
+        class BrokenStore:
+            def save(self, checkpoint):
+                raise OSError("storage unavailable")
+            def load(self, run_id):
+                return None
+            def delete(self, run_id):
+                pass
+
+        calls = []
+        graph = Graph().add_node(
+            "only", lambda ctx: (calls.append("only") or NodeResult.success())
+        ).set_entry("only").compile()
+        result = Runtime(checkpoint_store=BrokenStore()).run(graph, {})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "CHECKPOINT_SAVE_FAILED")
+        self.assertEqual(calls, ["only"])
+
     def test_linear_graph_executes_in_order_and_merges_updates(self) -> None:
         calls: list[str] = []
 
