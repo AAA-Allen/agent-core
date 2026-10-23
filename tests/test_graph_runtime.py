@@ -141,6 +141,27 @@ class GraphRuntimeTests(unittest.TestCase):
         self.assertEqual(checkpoint.state_version, 1)
         self.assertEqual(checkpoint.step_count, 1)
 
+    def test_runtime_file_checkpoint_roundtrip(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from agent_core import FileCheckpointStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = FileCheckpointStore(Path(directory))
+            graph = Graph().add_node(
+                "done", lambda ctx: NodeResult.success({"done": True})
+            ).set_entry("done").compile()
+            result = Runtime(checkpoint_store=store, graph_id="graph-v1").run(
+                graph, {}, run_id="file-checkpoint"
+            )
+            loaded = FileCheckpointStore(Path(directory)).load_for(
+                "file-checkpoint", "graph-v1"
+            )
+            self.assertEqual(result.status, RunStatus.COMPLETED)
+            self.assertEqual(loaded.state, {"done": True})
+            self.assertEqual(loaded.state_version, 1)
+            self.assertEqual(loaded.step_count, 1)
+
     def test_checkpoint_store_failure_fails_run_without_retry(self) -> None:
         class BrokenStore:
             def save(self, checkpoint):
