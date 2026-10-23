@@ -229,6 +229,29 @@ class GraphRuntimeTests(unittest.TestCase):
         )
         self.assertIsNone(runtime.get_status("unknown-run"))
 
+    def test_cancel_request_stops_before_next_node(self) -> None:
+        calls: list[str] = []
+        runtime = Runtime()
+
+        def first(ctx):
+            calls.append("first")
+            runtime.cancel(ctx.run_id)
+            return NodeResult.success({}, route="next")
+
+        graph = (
+            Graph().add_node("first", first)
+            .add_node("second", lambda ctx: calls.append("second") or NodeResult.success())
+            .set_entry("first").add_edge("first", "second", when="next").compile()
+        )
+        result = runtime.run(graph, {}, run_id="cancel-run")
+        from agent_core import LifecycleStatus
+        self.assertEqual(result.status, RunStatus.CANCELED)
+        self.assertEqual(result.reason_code, "CANCEL_REQUESTED")
+        self.assertEqual(calls, ["first"])
+        self.assertEqual(runtime.get_status("cancel-run"), LifecycleStatus.CANCELED)
+        self.assertEqual(result.trace[-1].event_type, "run.canceled")
+        self.assertFalse(runtime.cancel("cancel-run"))
+
     def test_resume_rejects_incompatible_or_terminal_checkpoint(self) -> None:
         from agent_core import Checkpoint
 

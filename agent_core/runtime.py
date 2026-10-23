@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 
 class RunStatus(str, Enum):
+    CANCELED = "CANCELED"
     COMPLETED = "COMPLETED"
     BLOCKED = "BLOCKED"
     FAILED = "FAILED"
@@ -233,6 +235,8 @@ class Runtime:
         self._checkpoint_store = checkpoint_store
         self._graph_id = graph_id
         self._lifecycles: dict[str, "RunLifecycle"] = {}
+        self._cancel_requests: set[str] = set()
+        self._cancel_lock = threading.Lock()
 
     def run(self, graph: Any, input: Mapping[str, Any], *, run_id: str | None = None) -> RunResult:
         """Execute a compiled graph synchronously until a terminal result."""
@@ -244,6 +248,8 @@ class Runtime:
             self._finish_lifecycle(lifecycle, RunStatus.FAILED, reason_code="RUNTIME_EXCEPTION")
             raise
         self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
+        with self._cancel_lock:
+            self._cancel_requests.discard(identity)
         return result
 
     def resume(self, graph: Any, checkpoint: Any) -> RunResult:
@@ -277,6 +283,8 @@ class Runtime:
             self._finish_lifecycle(lifecycle, RunStatus.FAILED, reason_code="RUNTIME_EXCEPTION")
             raise
         self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
+        with self._cancel_lock:
+            self._cancel_requests.discard(checkpoint.run_id)
         return result
 
     def get_status(self, run_id: str):
@@ -292,6 +300,20 @@ class Runtime:
         _validate_run_id(run_id)
         lifecycle = self._lifecycles.get(run_id)
         return () if lifecycle is None else lifecycle.events
+
+    def cancel(self, run_id: str) -> bool:
+        """Request cooperative cancellation; return whether it was accepted."""
+        _validate_run_id(run_id)
+        lifecycle = self._lifecycles.get(run_id)
+        if lifecycle is None or lifecycle.terminal:
+            return False
+        with self._cancel_lock:
+            self._cancel_requests.add(run_id)
+        return True
+
+    def _is_cancel_requested(self, run_id: str) -> bool:
+        with self._cancel_lock:
+            return run_id in self._cancel_requests
 
     def _begin_lifecycle(self, run_id: str):
         from .lifecycle import RunLifecycle, LifecycleStatus
@@ -309,6 +331,7 @@ class Runtime:
         from .lifecycle import LifecycleStatus
 
         target = {
+            RunStatus.CANCELED: LifecycleStatus.CANCELED,
             RunStatus.COMPLETED: LifecycleStatus.COMPLETED,
             RunStatus.BLOCKED: LifecycleStatus.BLOCKED,
             RunStatus.FAILED: LifecycleStatus.FAILED,
@@ -362,6 +385,12 @@ class Runtime:
                              tuple(trace), current, "MAX_STEPS_EXCEEDED",
                              _json_snapshot(state), simulated)
         for step_number in range(remaining_steps):
+            if self._is_cancel_requested(identity):
+                emit("run.canceled", node_id=current, status=RunStatus.CANCELED.value,
+                     reason_code="CANCEL_REQUESTED")
+                return RunResult(identity, RunStatus.CANCELED, _json_snapshot(state),
+                                 tuple(trace), current, "CANCEL_REQUESTED",
+                                 _json_snapshot(state), simulated)
             node = graph.nodes[current]
             execution_id = uuid4().hex
             emit("node.started", node_id=current, execution_id=execution_id)
@@ -370,8 +399,15 @@ class Runtime:
                     run_id=identity, node_id=current, execution_id=execution_id,
                     state_version=state_version,
                     _input=_json_snapshot(input), _state=_json_snapshot(state),
+                    _cancel_requested=lambda: self._is_cancel_requested(identity),
                 )
                 result = node.execute(context)
+                if self._is_cancel_requested(identity):
+                    emit("run.canceled", node_id=current, execution_id=execution_id,
+                         status=RunStatus.CANCELED.value, reason_code="CANCEL_REQUESTED")
+                    return RunResult(identity, RunStatus.CANCELED, _json_snapshot(state),
+                                     tuple(trace), current, "CANCEL_REQUESTED",
+                                     _json_snapshot(state), simulated)
                 if not isinstance(result, NodeResult):
                     emit("node.failed", node_id=current, execution_id=execution_id,
                          status=RunStatus.FAILED.value, reason_code="INVALID_NODE_RESULT")

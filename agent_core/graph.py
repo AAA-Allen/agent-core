@@ -22,6 +22,7 @@ class NodeContext:
     state_version: int
     _input: Mapping[str, Any]
     _state: Mapping[str, Any]
+    _cancel_requested: Callable[[], bool] | None = None
 
     @property
     def input(self) -> Mapping[str, Any]:
@@ -30,6 +31,11 @@ class NodeContext:
     @property
     def state(self) -> Mapping[str, Any]:
         return _readonly_snapshot(self._state)
+
+    @property
+    def cancel_requested(self) -> bool:
+        """Whether the runtime has requested cooperative cancellation."""
+        return False if self._cancel_requested is None else self._cancel_requested()
 
 
 @dataclass(frozen=True)
