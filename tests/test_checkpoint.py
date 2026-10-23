@@ -1,6 +1,6 @@
 import unittest
 
-from agent_core import Checkpoint, InMemoryCheckpointStore
+from agent_core import Checkpoint, FileCheckpointStore, InMemoryCheckpointStore
 
 
 class CheckpointTests(unittest.TestCase):
@@ -54,6 +54,32 @@ class CheckpointTests(unittest.TestCase):
         payload["schema_version"] = 2
         with self.assertRaisesRegex(ValueError, "unsupported checkpoint"):
             Checkpoint.from_dict(payload)
+
+    def test_file_store_roundtrip_and_graph_check(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = FileCheckpointStore(Path(directory))
+            checkpoint = Checkpoint("run-1", "graph-v1", "next", {"value": 1}, 2, 3)
+            store.save(checkpoint)
+            self.assertEqual(store.load("run-1"), checkpoint)
+            self.assertEqual(store.load_for("run-1", "graph-v1"), checkpoint)
+            with self.assertRaises(ValueError):
+                store.load_for("run-1", "graph-v2")
+
+    def test_file_store_rejects_older_checkpoint_and_bad_record(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = FileCheckpointStore(Path(directory))
+            store.save(Checkpoint("run-1", "graph-v1", None, {}, 2, 2))
+            with self.assertRaises(ValueError):
+                store.save(Checkpoint("run-1", "graph-v1", None, {}, 1, 1))
+            (Path(directory) / "broken.json").write_text("{bad", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid checkpoint"):
+                store.load("broken")
 
 
 if __name__ == "__main__":

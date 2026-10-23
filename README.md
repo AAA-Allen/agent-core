@@ -76,7 +76,7 @@ result = Runtime().run(graph, input={"text": "hello"})
 
 当前 v0.1 已包含线性图、条件路由、状态增量、Trace、工具适配和最大步数限制；不包含 Checkpoint、恢复、重试、取消、并行、LLM 或多 Agent 调度。
 
-v0.2 的第一步提供 `Checkpoint`、`CheckpointStore` 和 `InMemoryCheckpointStore` 快照协议。将 `checkpoint_store` 传给 `Runtime` 后，每次成功节点边界会保存状态、状态版本、下一节点和执行步数；`load_for()` 会校验快照所属的 `graph_id`。它们只保存可恢复状态，不自动恢复运行，也不承诺 exactly-once 执行。
+v0.2 的第一步提供 `Checkpoint`、`CheckpointStore`、`InMemoryCheckpointStore` 和 `FileCheckpointStore` 快照协议。将 `checkpoint_store` 传给 `Runtime` 后，每次成功节点边界会保存状态、状态版本、下一节点和执行步数；`load_for()` 会校验快照所属的 `graph_id`。它们只保存可恢复状态，不自动恢复运行，也不承诺 exactly-once 执行。
 
 ### 公共 API
 

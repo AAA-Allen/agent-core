@@ -7,7 +7,10 @@ re-execute a graph by itself, and it makes no exactly-once guarantee.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any, Mapping, Protocol
+from uuid import uuid4
 
 from .runtime import _json_snapshot, _validate_run_id
 
@@ -117,3 +120,58 @@ class InMemoryCheckpointStore:
     def delete(self, run_id: str) -> None:
         _validate_run_id(run_id)
         self._records.pop(run_id, None)
+
+
+class FileCheckpointStore:
+    """Atomic JSON checkpoint store for a single process or simple deployment."""
+
+    def __init__(self, directory: str | Path) -> None:
+        self._directory = Path(directory)
+
+    @property
+    def directory(self) -> Path:
+        return self._directory
+
+    def save(self, checkpoint: Checkpoint) -> None:
+        if not isinstance(checkpoint, Checkpoint):
+            raise TypeError("checkpoint must be a Checkpoint")
+        existing = self.load(checkpoint.run_id)
+        if existing is not None and checkpoint.state_version < existing.state_version:
+            raise ValueError("checkpoint state_version cannot move backwards")
+        self._directory.mkdir(parents=True, exist_ok=True)
+        target = self._directory / f"{checkpoint.run_id}.json"
+        temporary = self._directory / f".{checkpoint.run_id}.{uuid4().hex}.json.tmp"
+        temporary.write_text(
+            json.dumps(checkpoint.to_dict(), ensure_ascii=False, indent=2, allow_nan=False),
+            encoding="utf-8",
+        )
+        temporary.replace(target)
+
+    def load(self, run_id: str) -> Checkpoint | None:
+        _validate_run_id(run_id)
+        target = self._directory / f"{run_id}.json"
+        if not target.is_file():
+            return None
+        try:
+            checkpoint = Checkpoint.from_dict(json.loads(target.read_text(encoding="utf-8")))
+            if checkpoint.run_id != run_id:
+                raise ValueError("checkpoint run_id does not match filename")
+            return checkpoint
+        except (OSError, json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
+            raise ValueError("invalid checkpoint record") from exc
+
+    def load_for(self, run_id: str, graph_id: str) -> Checkpoint | None:
+        if not isinstance(graph_id, str) or not graph_id.strip():
+            raise ValueError("graph_id must be a nonempty string")
+        checkpoint = self.load(run_id)
+        if checkpoint is not None and checkpoint.graph_id != graph_id:
+            raise ValueError("checkpoint graph_id does not match requested graph")
+        return checkpoint
+
+    def delete(self, run_id: str) -> None:
+        _validate_run_id(run_id)
+        target = self._directory / f"{run_id}.json"
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            pass

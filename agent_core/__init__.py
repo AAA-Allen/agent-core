@@ -8,7 +8,7 @@ from .tools import Tool, ToolRegistry, ToolResult, ToolStatus, graph_tool_node, 
 from .graph import CompiledGraph, Edge, Graph, Node, NodeContext
 from .results import NodeResult, NodeStatus
 from .runtime import Runtime
-from .checkpoint import Checkpoint, CheckpointStore, InMemoryCheckpointStore
+from .checkpoint import Checkpoint, CheckpointStore, FileCheckpointStore, InMemoryCheckpointStore
 
 __all__ = [
     "RunContext", "RunResult", "RunStatus", "Step", "StepOutcome", "StepStatus",
@@ -16,6 +16,6 @@ __all__ = [
     "RunStore",
     "Graph", "CompiledGraph", "Node", "Edge", "NodeContext", "Runtime",
     "NodeResult", "NodeStatus",
-    "Checkpoint", "CheckpointStore", "InMemoryCheckpointStore",
+    "Checkpoint", "CheckpointStore", "InMemoryCheckpointStore", "FileCheckpointStore",
     "__version__",
 ]
