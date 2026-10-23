@@ -222,7 +222,8 @@ class Runtime:
     """
 
     def __init__(self, *, max_steps: int = 100, checkpoint_store: Any = None,
-                 graph_id: str = "graph", timeout_seconds: float | None = None) -> None:
+                 graph_id: str = "graph", timeout_seconds: float | None = None,
+                 store: "RunStore | None" = None) -> None:
         if not isinstance(max_steps, int) or isinstance(max_steps, bool) or max_steps <= 0:
             raise ValueError("max_steps must be a positive integer")
         self.max_steps = max_steps
@@ -242,6 +243,11 @@ class Runtime:
             raise ValueError("graph_id must be a nonempty string")
         self._checkpoint_store = checkpoint_store
         self._graph_id = graph_id
+        if store is not None and not all(
+            callable(getattr(store, name, None)) for name in ("save", "load")
+        ):
+            raise TypeError("store must implement save and load")
+        self._store = store
         self._lifecycles: dict[str, "RunLifecycle"] = {}
         self._cancel_requests: set[str] = set()
         self._cancel_lock = threading.Lock()
@@ -257,6 +263,7 @@ class Runtime:
             raise
         self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
         result = replace(result, lifecycle_events=lifecycle.events)
+        self._persist_result(result)
         with self._cancel_lock:
             self._cancel_requests.discard(identity)
         return result
@@ -293,6 +300,7 @@ class Runtime:
             raise
         self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
         result = replace(result, lifecycle_events=lifecycle.events)
+        self._persist_result(result)
         with self._cancel_lock:
             self._cancel_requests.discard(checkpoint.run_id)
         return result
@@ -303,13 +311,30 @@ class Runtime:
 
         _validate_run_id(run_id)
         lifecycle = self._lifecycles.get(run_id)
-        return None if lifecycle is None else lifecycle.status
+        if lifecycle is not None:
+            return lifecycle.status
+        if self._store is not None:
+            stored = self._store.load(run_id)
+            if stored is not None:
+                from .lifecycle import LifecycleStatus
+                return LifecycleStatus(stored.status.value)
+        return None
 
     def get_lifecycle_events(self, run_id: str) -> tuple["LifecycleEvent", ...]:
         """Return lifecycle events for a known run in sequence order."""
         _validate_run_id(run_id)
         lifecycle = self._lifecycles.get(run_id)
-        return () if lifecycle is None else lifecycle.events
+        if lifecycle is not None:
+            return lifecycle.events
+        if self._store is not None:
+            stored = self._store.load(run_id)
+            if stored is not None:
+                return stored.lifecycle_events
+        return ()
+
+    def _persist_result(self, result: RunResult) -> None:
+        if self._store is not None:
+            self._store.save(result)
 
     def cancel(self, run_id: str) -> bool:
         """Request cooperative cancellation; return whether it was accepted."""

@@ -292,6 +292,24 @@ class GraphRuntimeTests(unittest.TestCase):
                 self.assertEqual(result.lifecycle_events[-1].event_type, event_type)
                 self.assertEqual(runtime.get_status(run_id).value, run_id.upper())
 
+    def test_runtime_store_persists_and_queries_lifecycle_across_instances(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from agent_core import RunStore
+
+        graph = Graph().add_node("done", lambda ctx: NodeResult.success()).set_entry("done").compile()
+        with tempfile.TemporaryDirectory() as directory:
+            store = RunStore(Path(directory))
+            result = Runtime(store=store).run(graph, {}, run_id="stored-lifecycle")
+            self.assertEqual(result.status, RunStatus.COMPLETED)
+            fresh_runtime = Runtime(store=store)
+            from agent_core import LifecycleStatus
+            self.assertEqual(fresh_runtime.get_status("stored-lifecycle"), LifecycleStatus.COMPLETED)
+            self.assertEqual(
+                [event.event_type for event in fresh_runtime.get_lifecycle_events("stored-lifecycle")],
+                ["run.created", "run.running", "run.completed"],
+            )
+
     def test_external_thread_can_request_cooperative_cancellation(self) -> None:
         import threading
 
