@@ -47,7 +47,10 @@ class RunStore:
             return None
         try:
             payload = json.loads(target.read_text(encoding="utf-8"))
-            return _dict_to_result(payload)
+            result = _dict_to_result(payload)
+            if result.run_id != run_id:
+                raise ValueError("run_id does not match record filename")
+            return result
         except (OSError, json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
             raise ValueError("invalid run record") from exc
 

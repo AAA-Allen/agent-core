@@ -76,6 +76,16 @@ class RunStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid run record"):
             self.store.load("missing")
 
+    def test_record_run_id_must_match_filename(self) -> None:
+        path = self.store.directory / "requested.json"
+        self.store.directory.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '{"run_id": "different", "status": "COMPLETED", "outputs": {}, "trace": []}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid run record"):
+            self.store.load("requested")
+
     def test_list_runs_sorted(self) -> None:
         self.store.save(_sample_result("run-b"))
         self.store.save(_sample_result("run-a"))
