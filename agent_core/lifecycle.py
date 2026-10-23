@@ -150,9 +150,20 @@ class RunLifecycle:
         if first.event_type != "run.created" or first.from_status is not None \
                 or first.to_status is not LifecycleStatus.PENDING:
             raise ValueError("lifecycle event sequence must start with run.created")
+        status = LifecycleStatus.PENDING
+        for event in events[1:]:
+            if event.from_status is not status:
+                raise ValueError("lifecycle event transition source is invalid")
+            if event.event_type == "run.resumed":
+                if status not in {LifecycleStatus.FAILED, LifecycleStatus.BLOCKED} \
+                        or event.to_status is not LifecycleStatus.RUNNING:
+                    raise ValueError("lifecycle resume transition is invalid")
+            elif event.to_status not in _ALLOWED_TRANSITIONS[status]:
+                raise ValueError("lifecycle event transition is invalid")
+            status = event.to_status
         instance = cls.__new__(cls)
         instance.run_id = run_id
-        instance._status = events[-1].to_status
+        instance._status = status
         instance._events = list(events)
         return instance
 

@@ -49,6 +49,19 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot resume"):
             RunLifecycle("run-2").resume()
 
+    def test_rehydration_rejects_invalid_transition_history(self) -> None:
+        from datetime import datetime, timezone
+        from agent_core import LifecycleEvent
+
+        events = (
+            LifecycleEvent("run-1", 1, "e1", "run.created", None, LifecycleStatus.PENDING,
+                           datetime.now(timezone.utc).isoformat()),
+            LifecycleEvent("run-1", 2, "e2", "run.completed", LifecycleStatus.PENDING,
+                           LifecycleStatus.COMPLETED, datetime.now(timezone.utc).isoformat()),
+        )
+        with self.assertRaisesRegex(ValueError, "transition"):
+            RunLifecycle.from_events(events)
+
 
 if __name__ == "__main__":
     unittest.main()

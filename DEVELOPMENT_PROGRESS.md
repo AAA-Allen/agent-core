@@ -23,7 +23,7 @@
 
 ## Latest Verification
 
-最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 126 passed。
+最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 127 passed。
 
 ## Known Limits
 
@@ -35,6 +35,7 @@
 - `Runtime(store=...)` 会自动保存终态结果；新 Runtime 实例可从 RunStore 查询终态和生命周期事件。
 - RunStore 另外原子保存 `<run_id>.events.json`，支持运行中的状态和事件查询；事件日志不计入 `list_runs()` 的运行结果列表。
 - 跨 Runtime 实例 `resume()` 会从已持久化事件重建历史，并追加 `run.resumed`，不会覆盖旧终态事件。
+- 持久化事件重建会校验来源状态、目标状态和恢复转换，拒绝伪造或损坏的状态历史。
 - Store 写入失败会向调用方抛出异常，不会伪装成运行成功或静默丢失记录；内存生命周期仍保留真实终态。
 - 仅支持外部线程发出协作式取消请求；不提供并行节点调度或通用线程安全承诺。
 
