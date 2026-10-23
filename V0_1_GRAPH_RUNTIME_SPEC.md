@@ -1,6 +1,6 @@
 # agent-core v0.1 Graph Runtime API 与测试规范
 
-状态：开发基线（接口冻结前评审稿）
+状态：v0.1 接口冻结基线（v0.2 扩展另行标注）
 日期：2026-10-23
 
 ## 1. 基线事实
@@ -10,16 +10,16 @@
 - `Step`、`StepOutcome`、`RunContext`、`WorkflowRunner`
 - `Tool`、`ToolRegistry`、`tool_step`
 - `TraceEvent`、`RunResult`、`RunStore`
-- 57 个单元测试，覆盖线性执行、工具调用和结束态 JSON 持久化
+- `Graph`、`Node`、`Edge`、`NodeResult`、`Runtime`
+- 109 个单元测试，覆盖图执行、工具调用、Checkpoint 和结束态 JSON 持久化
 
-当前仓库没有实现：
+当前仓库的 v0.1 基线没有实现：
 
-- `Graph`、`Node`、`Edge`、`NodeResult`
-- `Checkpoint`、暂停恢复、重试、取消或并行调度
+- 暂停恢复、重试、取消或并行调度
 - `ModelAdapter` 或 `Replay`
 - 完整的 `PolicyEngine`
 
-本规范是目标接口，不把设计文档中的未实现能力视为现有能力。
+仓库另有 v0.2 Checkpoint 快照和显式 `Runtime.resume()` 实现；它们不改变本规范冻结的 v0.1 图执行语义。本规范中的“不提供 `resume()` 或 `checkpoint_store`”仅指 v0.1 基线接口。
 
 ## 2. v0.1 范围
 
@@ -140,7 +140,7 @@ class Runtime:
 
 `max_steps` 必须为正整数。每执行一个节点增加一次计数；超过上限时不再执行节点，返回 `FAILED` 和 `MAX_STEPS_EXCEEDED`。
 
-v0.1 不提供 `resume()`、`cancel()` 或 `checkpoint_store` 参数。
+v0.1 不提供 `resume()`、`cancel()` 或 `checkpoint_store` 参数；Checkpoint 和显式恢复属于 v0.2 扩展。
 
 ### 3.5 结果和 Trace
 
