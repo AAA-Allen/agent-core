@@ -182,6 +182,12 @@ class WorkflowRunnerExecutionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             workflow.run({"x": 1}, run_id="   ")
 
+    def test_run_id_cannot_escape_persistence_path(self) -> None:
+        workflow = WorkflowRunner([_ok_step("a")])
+        for run_id in ("../escape", "..\\escape", "nested/id", "C:"):
+            with self.subTest(run_id=run_id), self.assertRaises(ValueError):
+                workflow.run({"x": 1}, run_id=run_id)
+
 
 if __name__ == "__main__":
     unittest.main()

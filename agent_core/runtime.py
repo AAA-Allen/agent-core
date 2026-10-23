@@ -8,6 +8,7 @@ is required by the core.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -89,16 +90,29 @@ class TraceEvent:
     duration_ms: float
     reason_code: str | None = None
     error_type: str | None = None
+    event_id: str | None = None
+    event_type: str | None = None
+    sequence: int = 0
+    node_id: str | None = None
+    execution_id: str | None = None
+    state_version: int = 0
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class RunResult:
     run_id: str
     status: RunStatus
-    outputs: Mapping[str, Mapping[str, Any]]
+    outputs: Mapping[str, Any]
     trace: tuple[TraceEvent, ...]
     stopped_at: str | None = None
     reason_code: str | None = None
+    state: Mapping[str, Any] | None = None
+    simulated: bool = False
+
+    def __post_init__(self) -> None:
+        if self.state is None:
+            object.__setattr__(self, "state", self.outputs)
 
 
 class WorkflowRunner:
@@ -129,8 +143,7 @@ class WorkflowRunner:
         if not isinstance(input_data, Mapping):
             raise TypeError("input_data must be a mapping")
         identity = uuid4().hex if run_id is None else run_id
-        if not isinstance(identity, str) or not identity.strip() or len(identity) > 128:
-            raise ValueError("run_id must contain 1-128 non-whitespace characters")
+        _validate_run_id(identity)
         context = RunContext(run_id=identity, _input=_json_snapshot(input_data))
         result = self._execute(context)
         if self._store is not None:
@@ -171,3 +184,143 @@ class WorkflowRunner:
 def _json_snapshot(value: Mapping[str, Any]) -> dict[str, Any]:
     """Detach step data and reject non-finite or non-JSON workflow payloads."""
     return json.loads(json.dumps(dict(value), ensure_ascii=False, allow_nan=False))
+
+
+_RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
+
+
+def _validate_run_id(run_id: str) -> None:
+    if not isinstance(run_id, str) or not _RUN_ID_PATTERN.fullmatch(run_id):
+        raise ValueError(
+            "run_id must be 1-128 characters using letters, digits, '-' or '_'"
+        )
+
+
+class Runtime:
+    """Synchronous v0.1 graph executor.
+
+    This is intentionally separate from WorkflowRunner so the existing linear
+    API remains compatible while Graph Runtime behavior is introduced.
+    """
+
+    def __init__(self, *, max_steps: int = 100) -> None:
+        if not isinstance(max_steps, int) or isinstance(max_steps, bool) or max_steps <= 0:
+            raise ValueError("max_steps must be a positive integer")
+        self.max_steps = max_steps
+
+    def run(self, graph: Any, input: Mapping[str, Any], *, run_id: str | None = None) -> RunResult:
+        from .graph import NodeContext, CompiledGraph
+        from .results import NodeResult, NodeStatus
+
+        if not isinstance(graph, CompiledGraph):
+            raise TypeError("graph must be a compiled Graph")
+        if not isinstance(input, Mapping):
+            raise TypeError("input must be a mapping")
+        identity = uuid4().hex if run_id is None else run_id
+        _validate_run_id(identity)
+
+        state: dict[str, Any] = _json_snapshot(input)
+        trace: list[TraceEvent] = []
+        sequence = 0
+        state_version = 0
+        simulated = False
+
+        def emit(event_type: str, *, node_id: str | None = None,
+                 execution_id: str | None = None, status: str | None = None,
+                 reason_code: str | None = None) -> None:
+            nonlocal sequence
+            sequence += 1
+            timestamp = datetime.now(timezone.utc).isoformat()
+            trace.append(TraceEvent(
+                run_id=identity, step=node_id or "", status=status or event_type,
+                started_at=timestamp, duration_ms=0.0, reason_code=reason_code,
+                event_id=uuid4().hex, event_type=event_type, sequence=sequence,
+                node_id=node_id, execution_id=execution_id,
+                state_version=state_version,
+            ))
+
+        emit("run.started")
+        current = graph.entry
+        for _ in range(self.max_steps):
+            node = graph.nodes[current]
+            execution_id = uuid4().hex
+            emit("node.started", node_id=current, execution_id=execution_id)
+            try:
+                context = NodeContext(
+                    run_id=identity, node_id=current, execution_id=execution_id,
+                    state_version=state_version,
+                    _input=_json_snapshot(input), _state=_json_snapshot(state),
+                )
+                result = node.execute(context)
+                if not isinstance(result, NodeResult):
+                    emit("node.failed", node_id=current, execution_id=execution_id,
+                         status=RunStatus.FAILED.value, reason_code="INVALID_NODE_RESULT")
+                    emit("run.failed", node_id=current, status=RunStatus.FAILED.value,
+                         reason_code="INVALID_NODE_RESULT")
+                    return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
+                                     tuple(trace), current, "INVALID_NODE_RESULT",
+                                     _json_snapshot(state), simulated)
+                if result.status is NodeStatus.SUCCEEDED:
+                    try:
+                        updates = _json_snapshot(result.updates)
+                    except (TypeError, ValueError, OverflowError):
+                        emit("node.failed", node_id=current, execution_id=execution_id,
+                             status=RunStatus.FAILED.value, reason_code="INVALID_STATE_UPDATE")
+                        emit("run.failed", node_id=current, status=RunStatus.FAILED.value,
+                             reason_code="INVALID_STATE_UPDATE")
+                        return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
+                                         tuple(trace), current, "INVALID_STATE_UPDATE",
+                                         _json_snapshot(state), simulated)
+                    candidate = dict(state)
+                    candidate.update(updates)
+                    state = _json_snapshot(candidate)
+                    state_version += 1
+                    simulated = simulated or result.simulated
+                    emit("state.committed", node_id=current, execution_id=execution_id)
+                    emit("node.completed", node_id=current, execution_id=execution_id,
+                         status=result.status.value)
+                else:
+                    emit(
+                        "node.blocked" if result.status is NodeStatus.BLOCKED else "node.failed",
+                        node_id=current, execution_id=execution_id,
+                        status=result.status.value, reason_code=result.reason_code,
+                    )
+                    final_status = RunStatus.BLOCKED if result.status is NodeStatus.BLOCKED else RunStatus.FAILED
+                    emit("run.blocked" if final_status is RunStatus.BLOCKED else "run.failed",
+                         node_id=current, status=final_status.value, reason_code=result.reason_code)
+                    return RunResult(identity, final_status, _json_snapshot(state),
+                                     tuple(trace), current, result.reason_code,
+                                     _json_snapshot(state), simulated)
+            except Exception:
+                emit("node.failed", node_id=current, execution_id=execution_id,
+                     status=RunStatus.FAILED.value, reason_code="NODE_EXCEPTION")
+                emit("run.failed", node_id=current, status=RunStatus.FAILED.value,
+                     reason_code="NODE_EXCEPTION")
+                return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
+                                 tuple(trace), current, "NODE_EXCEPTION",
+                                 _json_snapshot(state), simulated)
+
+            edges = graph.outgoing(current)
+            if not edges:
+                emit("run.completed", node_id=current, status=RunStatus.COMPLETED.value)
+                return RunResult(identity, RunStatus.COMPLETED, _json_snapshot(state),
+                                 tuple(trace), None, None, _json_snapshot(state), simulated)
+            route = result.route
+            matches = [edge for edge in edges if edge.when == route]
+            if len(matches) == 0:
+                code = "NO_ROUTE"
+                emit("run.failed", node_id=current, status=RunStatus.FAILED.value, reason_code=code)
+                return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
+                                 tuple(trace), current, code, _json_snapshot(state), simulated)
+            if len(matches) > 1:
+                code = "AMBIGUOUS_ROUTE"
+                emit("run.failed", node_id=current, status=RunStatus.FAILED.value, reason_code=code)
+                return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
+                                 tuple(trace), current, code, _json_snapshot(state), simulated)
+            emit("route.selected", node_id=current, status=RunStatus.COMPLETED.value)
+            current = matches[0].target
+
+        code = "MAX_STEPS_EXCEEDED"
+        emit("run.failed", node_id=current, status=RunStatus.FAILED.value, reason_code=code)
+        return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
+                         tuple(trace), current, code, _json_snapshot(state), simulated)

@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
+from uuid import uuid4
 
-from .runtime import RunResult, RunStatus, TraceEvent
+from .runtime import RunResult, RunStatus, TraceEvent, _validate_run_id
 
 
 class RunStore:
@@ -28,8 +29,9 @@ class RunStore:
     def save(self, result: RunResult) -> Path:
         """Write one run record atomically; an existing run_id is overwritten."""
         self._directory.mkdir(parents=True, exist_ok=True)
+        _validate_run_id(result.run_id)
         target = self._directory / f"{result.run_id}.json"
-        tmp = target.with_suffix(".json.tmp")
+        tmp = self._directory / f".{result.run_id}.{uuid4().hex}.json.tmp"
         payload = json.dumps(
             _result_to_dict(result), ensure_ascii=False, indent=2, allow_nan=False
         )
@@ -39,6 +41,7 @@ class RunStore:
 
     def load(self, run_id: str) -> RunResult | None:
         """Return a stored run, or None when the run_id was never saved."""
+        _validate_run_id(run_id)
         target = self._directory / f"{run_id}.json"
         if not target.is_file():
             return None
@@ -59,6 +62,8 @@ def _result_to_dict(result: RunResult) -> dict:
         "trace": [asdict(event) for event in result.trace],
         "stopped_at": result.stopped_at,
         "reason_code": result.reason_code,
+        "state": dict(result.state if result.state is not None else result.outputs),
+        "simulated": result.simulated,
     }
 
 
@@ -72,6 +77,13 @@ def _dict_to_result(payload: dict) -> RunResult:
             duration_ms=event["duration_ms"],
             reason_code=event.get("reason_code"),
             error_type=event.get("error_type"),
+            event_id=event.get("event_id"),
+            event_type=event.get("event_type"),
+            sequence=event.get("sequence", 0),
+            node_id=event.get("node_id"),
+            execution_id=event.get("execution_id"),
+            state_version=event.get("state_version", 0),
+            metadata=event.get("metadata", {}),
         )
         for event in payload["trace"]
     )
@@ -82,4 +94,6 @@ def _dict_to_result(payload: dict) -> RunResult:
         trace=trace,
         stopped_at=payload.get("stopped_at"),
         reason_code=payload.get("reason_code"),
+        state=payload.get("state", payload["outputs"]),
+        simulated=payload.get("simulated", False),
     )

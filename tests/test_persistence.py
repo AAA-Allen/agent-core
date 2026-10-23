@@ -54,6 +54,12 @@ class RunStoreTests(unittest.TestCase):
     def test_load_missing_returns_none(self) -> None:
         self.assertIsNone(self.store.load("never-saved"))
 
+    def test_path_like_run_ids_are_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.load("../outside")
+        with self.assertRaises(ValueError):
+            self.store.save(_sample_result("nested/name"))
+
     def test_list_runs_sorted(self) -> None:
         self.store.save(_sample_result("run-b"))
         self.store.save(_sample_result("run-a"))

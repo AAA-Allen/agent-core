@@ -53,6 +53,29 @@ python -m pytest tests/ -q
 python -m examples.text_pipeline
 ```
 
+## v0.1 Graph Runtime
+
+v0.1 在保留 `WorkflowRunner`、`Step`、`StepOutcome` 和 `ToolRegistry` 的基础上，提供图执行 API：
+
+```python
+from agent_core import Graph, NodeResult, Runtime
+
+graph = (
+    Graph()
+    .add_node("validate", lambda ctx: NodeResult.success({"valid": True}, route="next"))
+    .add_node("finish", lambda ctx: NodeResult.success({"done": True}))
+    .set_entry("validate")
+    .add_edge("validate", "finish", when="next")
+    .compile()
+)
+result = Runtime().run(graph, input={"text": "hello"})
+```
+
+图节点只能返回 `NodeResult`，由 Runtime 验证并合并 `updates`。节点状态为
+`NodeStatus.SUCCEEDED`、`BLOCKED` 或 `FAILED`；阻断和失败会停止当前运行。图运行支持条件路由、静态校验、最大执行步数和统一 Trace。`simulated=True` 会保留在最终结果中，不能当作真实工具执行证据。
+
+当前 v0.1 不包含 Checkpoint、恢复、重试、取消、并行、LLM 或多 Agent 调度。
+
 ## 能力边界（尚未做）
 
 - 没有 LLM 自主规划、多 Agent 协商、条件分支、并行节点、人工等待节点
