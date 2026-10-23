@@ -85,6 +85,16 @@ class GraphRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Graph().add_node("a", lambda ctx: NodeResult.success()).add_node("a", lambda ctx: NodeResult.success())
 
+    def test_compiled_graph_is_an_immutable_snapshot(self) -> None:
+        graph = Graph().add_node("a", lambda ctx: NodeResult.success()).set_entry("a")
+        compiled = graph.compile()
+        graph.add_node("b", lambda ctx: NodeResult.success())
+        graph.add_edge("a", "b")
+
+        self.assertEqual(tuple(compiled.nodes), ("a",))
+        with self.assertRaises(TypeError):
+            compiled.nodes["b"] = compiled.nodes["a"]
+
     def test_loop_is_bounded(self) -> None:
         graph = (
             Graph().add_node("loop", lambda ctx: NodeResult.success(route="again"))
