@@ -292,10 +292,16 @@ class Runtime:
                 lifecycle = self._begin_lifecycle(checkpoint.run_id)
             else:
                 self._lifecycles[checkpoint.run_id] = lifecycle
-                lifecycle.resume()
+                if lifecycle.status.value == "RUNNING":
+                    lifecycle.recover()
+                else:
+                    lifecycle.resume()
                 self._persist_lifecycle(lifecycle)
         else:
-            lifecycle.resume()
+            if lifecycle.status.value == "RUNNING":
+                lifecycle.recover()
+            else:
+                lifecycle.resume()
             self._persist_lifecycle(lifecycle)
         try:
             result = self._execute(

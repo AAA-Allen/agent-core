@@ -158,6 +158,10 @@ class RunLifecycle:
                 if status not in {LifecycleStatus.FAILED, LifecycleStatus.BLOCKED} \
                         or event.to_status is not LifecycleStatus.RUNNING:
                     raise ValueError("lifecycle resume transition is invalid")
+            elif event.event_type == "run.recovered":
+                if status is not LifecycleStatus.RUNNING \
+                        or event.to_status is not LifecycleStatus.RUNNING:
+                    raise ValueError("lifecycle recovery transition is invalid")
             elif event.to_status not in _ALLOWED_TRANSITIONS[status]:
                 raise ValueError("lifecycle event transition is invalid")
             status = event.to_status
@@ -166,6 +170,25 @@ class RunLifecycle:
         instance._status = status
         instance._events = list(events)
         return instance
+
+    def recover(self) -> LifecycleEvent:
+        """Record explicit recovery of a persisted RUNNING execution."""
+        if self._status is not LifecycleStatus.RUNNING:
+            raise ValueError(
+                f"run cannot recover from lifecycle status: {self._status.value}"
+            )
+        event = LifecycleEvent(
+            run_id=self.run_id,
+            sequence=len(self._events) + 1,
+            event_id=uuid4().hex,
+            event_type="run.recovered",
+            from_status=LifecycleStatus.RUNNING,
+            to_status=LifecycleStatus.RUNNING,
+            occurred_at=datetime.now(timezone.utc).isoformat(),
+            reason_code="RECOVERY",
+        )
+        self._events.append(event)
+        return event
 
 
 __all__ = ["LifecycleEvent", "LifecycleStatus", "RunLifecycle"]

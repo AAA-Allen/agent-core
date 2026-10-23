@@ -62,6 +62,13 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "transition"):
             RunLifecycle.from_events(events)
 
+    def test_explicit_recovery_records_running_recovery(self) -> None:
+        lifecycle = RunLifecycle("run-1")
+        lifecycle.transition(LifecycleStatus.RUNNING)
+        event = lifecycle.recover()
+        self.assertEqual(event.event_type, "run.recovered")
+        self.assertEqual(lifecycle.status, LifecycleStatus.RUNNING)
+
 
 if __name__ == "__main__":
     unittest.main()

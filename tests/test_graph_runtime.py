@@ -374,6 +374,29 @@ class GraphRuntimeTests(unittest.TestCase):
                 ["run.created", "run.running", "run.failed", "run.resumed", "run.completed"],
             )
 
+    def test_resume_recovers_persisted_running_lifecycle(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from agent_core import Checkpoint, LifecycleEvent, LifecycleStatus, RunStore
+        from datetime import datetime, timezone
+
+        graph = Graph().add_node("done", lambda ctx: NodeResult.success()).set_entry("done").compile()
+        with tempfile.TemporaryDirectory() as directory:
+            store = RunStore(Path(directory))
+            created = LifecycleEvent("crashed-run", 1, "e1", "run.created", None,
+                                     LifecycleStatus.PENDING, datetime.now(timezone.utc).isoformat())
+            running = LifecycleEvent("crashed-run", 2, "e2", "run.running",
+                                     LifecycleStatus.PENDING, LifecycleStatus.RUNNING,
+                                     datetime.now(timezone.utc).isoformat())
+            store.save_lifecycle_events("crashed-run", (created, running))
+            checkpoint = Checkpoint("crashed-run", "graph", "done", {}, 0, 0)
+            result = Runtime(store=store).resume(graph, checkpoint)
+            self.assertEqual(result.status, RunStatus.COMPLETED)
+            self.assertEqual(
+                [event.event_type for event in result.lifecycle_events],
+                ["run.created", "run.running", "run.recovered", "run.completed"],
+            )
+
     def test_external_thread_can_request_cooperative_cancellation(self) -> None:
         import threading
 
