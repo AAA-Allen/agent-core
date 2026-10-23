@@ -1,5 +1,7 @@
 """Domain-neutral agent workflow runtime."""
 
+__version__ = "0.1.1"
+
 from .persistence import RunStore
 from .runtime import RunContext, RunResult, RunStatus, Step, StepOutcome, StepStatus, TraceEvent, WorkflowRunner
 from .tools import Tool, ToolRegistry, ToolResult, ToolStatus, graph_tool_node, tool_step
@@ -13,4 +15,5 @@ __all__ = [
     "RunStore",
     "Graph", "CompiledGraph", "Node", "Edge", "NodeContext", "Runtime",
     "NodeResult", "NodeStatus",
+    "__version__",
 ]

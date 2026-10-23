@@ -74,7 +74,7 @@ result = Runtime().run(graph, input={"text": "hello"})
 图节点只能返回 `NodeResult`，由 Runtime 验证并合并 `updates`。节点状态为
 `NodeStatus.SUCCEEDED`、`BLOCKED` 或 `FAILED`；阻断和失败会停止当前运行。图运行支持条件路由、静态校验、最大执行步数和统一 Trace。`simulated=True` 会保留在最终结果中，不能当作真实工具执行证据。
 
-当前 v0.1 不包含 Checkpoint、恢复、重试、取消、并行、LLM 或多 Agent 调度。
+当前 v0.1 已包含线性图、条件路由、状态增量、Trace、工具适配和最大步数限制；不包含 Checkpoint、恢复、重试、取消、并行、LLM 或多 Agent 调度。
 
 ### 公共 API
 
