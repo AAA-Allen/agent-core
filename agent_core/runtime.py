@@ -233,6 +233,33 @@ class Runtime:
 
     def run(self, graph: Any, input: Mapping[str, Any], *, run_id: str | None = None) -> RunResult:
         """Execute a compiled graph synchronously until a terminal result."""
+        identity = uuid4().hex if run_id is None else run_id
+        return self._execute(graph, input, run_id=identity)
+
+    def resume(self, graph: Any, checkpoint: Any) -> RunResult:
+        """Continue from a compatible checkpoint at its next node."""
+        from .checkpoint import Checkpoint
+
+        if not isinstance(checkpoint, Checkpoint):
+            raise TypeError("checkpoint must be a Checkpoint")
+        if checkpoint.graph_id != self._graph_id:
+            raise ValueError("checkpoint graph_id does not match runtime graph_id")
+        if checkpoint.next_node is None:
+            raise ValueError("checkpoint has no next_node to resume")
+        return self._execute(
+            graph, checkpoint.state, run_id=checkpoint.run_id,
+            initial_state=checkpoint.state, current=checkpoint.next_node,
+            state_version=checkpoint.state_version,
+            step_offset=checkpoint.step_count,
+        )
+
+    def _execute(
+        self, graph: Any, input: Mapping[str, Any], *, run_id: str,
+        initial_state: Mapping[str, Any] | None = None,
+        current: str | None = None, state_version: int = 0,
+        step_offset: int = 0,
+    ) -> RunResult:
+        """Execute from an entry node or a validated checkpoint boundary."""
         from .graph import NodeContext, CompiledGraph
         from .results import NodeResult, NodeStatus
         from .checkpoint import Checkpoint
@@ -241,13 +268,12 @@ class Runtime:
             raise TypeError("graph must be a compiled Graph")
         if not isinstance(input, Mapping):
             raise TypeError("input must be a mapping")
-        identity = uuid4().hex if run_id is None else run_id
+        identity = run_id
         _validate_run_id(identity)
 
-        state: dict[str, Any] = _json_snapshot(input)
+        state: dict[str, Any] = _json_snapshot(input if initial_state is None else initial_state)
         trace: list[TraceEvent] = []
         sequence = 0
-        state_version = 0
         simulated = False
 
         def emit(event_type: str, *, node_id: str | None = None,
@@ -265,8 +291,13 @@ class Runtime:
             ))
 
         emit("run.started")
-        current = graph.entry
-        for _ in range(self.max_steps):
+        current = graph.entry if current is None else current
+        remaining_steps = self.max_steps - step_offset
+        if remaining_steps <= 0:
+            return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
+                             tuple(trace), current, "MAX_STEPS_EXCEEDED",
+                             _json_snapshot(state), simulated)
+        for step_number in range(remaining_steps):
             node = graph.nodes[current]
             execution_id = uuid4().hex
             emit("node.started", node_id=current, execution_id=execution_id)
@@ -328,7 +359,7 @@ class Runtime:
             edges = graph.outgoing(current)
             if not edges:
                 checkpoint_error = self._save_checkpoint(
-                    Checkpoint(identity, self._graph_id, None, state, state_version, _ + 1)
+                    Checkpoint(identity, self._graph_id, None, state, state_version, step_offset + step_number + 1)
                 )
                 if checkpoint_error is not None:
                     emit("run.failed", node_id=current, status=RunStatus.FAILED.value,
@@ -353,7 +384,7 @@ class Runtime:
                                  tuple(trace), current, code, _json_snapshot(state), simulated)
             next_node = matches[0].target
             checkpoint_error = self._save_checkpoint(
-                Checkpoint(identity, self._graph_id, next_node, state, state_version, _ + 1)
+                Checkpoint(identity, self._graph_id, next_node, state, state_version, step_offset + step_number + 1)
             )
             if checkpoint_error is not None:
                 emit("run.failed", node_id=current, status=RunStatus.FAILED.value,

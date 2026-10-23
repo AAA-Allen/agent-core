@@ -194,6 +194,32 @@ class GraphRuntimeTests(unittest.TestCase):
         self.assertEqual([(item.next_node, item.state_version, item.step_count) for item in saved],
                          [("second", 1, 1), (None, 2, 2)])
 
+    def test_runtime_resume_continues_from_checkpoint_boundary(self) -> None:
+        from agent_core import Checkpoint, InMemoryCheckpointStore
+
+        calls: list[str] = []
+        graph = (
+            Graph()
+            .add_node("first", lambda ctx: (calls.append("first") or NodeResult.success({"a": 1}, route="next")))
+            .add_node("second", lambda ctx: (calls.append("second") or NodeResult.success({"b": 2})))
+            .set_entry("first").add_edge("first", "second", when="next").compile()
+        )
+        checkpoint = Checkpoint("resume-1", "graph-v1", "second", {"a": 1}, 1, 1)
+        result = Runtime(graph_id="graph-v1").resume(graph, checkpoint)
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(result.state, {"a": 1, "b": 2})
+        self.assertEqual(calls, ["second"])
+
+    def test_resume_rejects_incompatible_or_terminal_checkpoint(self) -> None:
+        from agent_core import Checkpoint
+
+        graph = Graph().add_node("done", lambda ctx: NodeResult.success()).set_entry("done").compile()
+        runtime = Runtime(graph_id="graph-v1")
+        with self.assertRaises(ValueError):
+            runtime.resume(graph, Checkpoint("r1", "graph-v2", "done", {}, 0, 0))
+        with self.assertRaises(ValueError):
+            runtime.resume(graph, Checkpoint("r2", "graph-v1", None, {}, 1, 1))
+
     def test_checkpoint_store_failure_fails_run_without_retry(self) -> None:
         class BrokenStore:
             def save(self, checkpoint):
