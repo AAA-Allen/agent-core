@@ -300,6 +300,8 @@ class Runtime:
         current = graph.entry if current is None else current
         remaining_steps = self.max_steps - step_offset
         if remaining_steps <= 0:
+            emit("run.failed", node_id=current, status=RunStatus.FAILED.value,
+                 reason_code="MAX_STEPS_EXCEEDED")
             return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
                              tuple(trace), current, "MAX_STEPS_EXCEEDED",
                              _json_snapshot(state), simulated)

@@ -273,6 +273,8 @@ class GraphRuntimeTests(unittest.TestCase):
         self.assertEqual(result.status, RunStatus.FAILED)
         self.assertEqual(result.reason_code, "MAX_STEPS_EXCEEDED")
         self.assertEqual(calls, [])
+        self.assertEqual(result.trace[-1].event_type, "run.failed")
+        self.assertEqual(result.trace[-1].reason_code, "MAX_STEPS_EXCEEDED")
 
     def test_checkpoint_store_failure_fails_run_without_retry(self) -> None:
         class BrokenStore:
