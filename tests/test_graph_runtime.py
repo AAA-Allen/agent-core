@@ -30,6 +30,16 @@ class GraphRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             graph.compile()
 
+    def test_compile_does_not_execute_nodes(self) -> None:
+        calls: list[str] = []
+
+        def node(ctx):
+            calls.append("executed")
+            return NodeResult.success()
+
+        Graph().add_node("node", node).set_entry("node").compile()
+        self.assertEqual(calls, [])
+
     def test_runtime_requires_compiled_graph_and_positive_step_limit(self) -> None:
         with self.assertRaises(ValueError):
             Runtime(max_steps=0)
