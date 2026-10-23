@@ -40,12 +40,20 @@ class CheckpointTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot move backwards"):
             store.save(Checkpoint("run-1", "graph-v1", "old", {}, 1, 1))
 
+    def test_memory_store_rejects_step_count_rollback(self) -> None:
+        store = InMemoryCheckpointStore()
+        store.save(Checkpoint("run-1", "graph-v1", "next", {}, 2, 3))
+        with self.assertRaisesRegex(ValueError, "step_count cannot move backwards"):
+            store.save(Checkpoint("run-1", "graph-v1", "old", {}, 2, 2))
+
     def test_memory_store_checks_graph_compatibility(self) -> None:
         store = InMemoryCheckpointStore()
         store.save(Checkpoint("run-1", "graph-v1", "next", {}, 1, 1))
         self.assertIsNotNone(store.load_for("run-1", "graph-v1"))
         with self.assertRaisesRegex(ValueError, "graph_id does not match"):
             store.load_for("run-1", "graph-v2")
+        with self.assertRaisesRegex(ValueError, "graph_id cannot change"):
+            store.save(Checkpoint("run-1", "graph-v2", "next", {}, 2, 2))
 
     def test_checkpoint_json_shape_roundtrips_and_rejects_unknown_schema(self) -> None:
         checkpoint = Checkpoint("run-1", "graph-v1", "next", {"value": 1}, 2, 3)
@@ -77,6 +85,10 @@ class CheckpointTests(unittest.TestCase):
             store.save(Checkpoint("run-1", "graph-v1", None, {}, 2, 2))
             with self.assertRaises(ValueError):
                 store.save(Checkpoint("run-1", "graph-v1", None, {}, 1, 1))
+            with self.assertRaisesRegex(ValueError, "step_count cannot move backwards"):
+                store.save(Checkpoint("run-1", "graph-v1", None, {}, 2, 1))
+            with self.assertRaisesRegex(ValueError, "graph_id cannot change"):
+                store.save(Checkpoint("run-1", "graph-v2", None, {}, 3, 3))
             (Path(directory) / "broken.json").write_text("{bad", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "invalid checkpoint"):
                 store.load("broken")

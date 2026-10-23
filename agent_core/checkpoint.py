@@ -88,8 +88,13 @@ class InMemoryCheckpointStore:
         if not isinstance(checkpoint, Checkpoint):
             raise TypeError("checkpoint must be a Checkpoint")
         existing = self._records.get(checkpoint.run_id)
-        if existing is not None and checkpoint.state_version < existing.state_version:
-            raise ValueError("checkpoint state_version cannot move backwards")
+        if existing is not None:
+            if checkpoint.graph_id != existing.graph_id:
+                raise ValueError("checkpoint graph_id cannot change")
+            if checkpoint.state_version < existing.state_version:
+                raise ValueError("checkpoint state_version cannot move backwards")
+            if checkpoint.step_count < existing.step_count:
+                raise ValueError("checkpoint step_count cannot move backwards")
         self._records[checkpoint.run_id] = Checkpoint(
             checkpoint.run_id, checkpoint.graph_id, checkpoint.next_node,
             checkpoint.state, checkpoint.state_version, checkpoint.step_count,
@@ -136,8 +141,13 @@ class FileCheckpointStore:
         if not isinstance(checkpoint, Checkpoint):
             raise TypeError("checkpoint must be a Checkpoint")
         existing = self.load(checkpoint.run_id)
-        if existing is not None and checkpoint.state_version < existing.state_version:
-            raise ValueError("checkpoint state_version cannot move backwards")
+        if existing is not None:
+            if checkpoint.graph_id != existing.graph_id:
+                raise ValueError("checkpoint graph_id cannot change")
+            if checkpoint.state_version < existing.state_version:
+                raise ValueError("checkpoint state_version cannot move backwards")
+            if checkpoint.step_count < existing.step_count:
+                raise ValueError("checkpoint step_count cannot move backwards")
         self._directory.mkdir(parents=True, exist_ok=True)
         target = self._directory / f"{checkpoint.run_id}.json"
         temporary = self._directory / f".{checkpoint.run_id}.{uuid4().hex}.json.tmp"
