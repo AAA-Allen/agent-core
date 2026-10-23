@@ -240,13 +240,18 @@ class Runtime:
     def resume(self, graph: Any, checkpoint: Any) -> RunResult:
         """Continue from a compatible checkpoint at its next node."""
         from .checkpoint import Checkpoint
+        from .graph import CompiledGraph
 
         if not isinstance(checkpoint, Checkpoint):
             raise TypeError("checkpoint must be a Checkpoint")
+        if not isinstance(graph, CompiledGraph):
+            raise TypeError("graph must be a compiled Graph")
         if checkpoint.graph_id != self._graph_id:
             raise ValueError("checkpoint graph_id does not match runtime graph_id")
         if checkpoint.next_node is None:
             raise ValueError("checkpoint has no next_node to resume")
+        if checkpoint.next_node not in graph.nodes:
+            raise ValueError("checkpoint next_node does not exist in graph")
         return self._execute(
             graph, checkpoint.state, run_id=checkpoint.run_id,
             initial_state=checkpoint.state, current=checkpoint.next_node,

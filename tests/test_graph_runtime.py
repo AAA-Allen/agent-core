@@ -219,6 +219,8 @@ class GraphRuntimeTests(unittest.TestCase):
             runtime.resume(graph, Checkpoint("r1", "graph-v2", "done", {}, 0, 0))
         with self.assertRaises(ValueError):
             runtime.resume(graph, Checkpoint("r2", "graph-v1", None, {}, 1, 1))
+        with self.assertRaisesRegex(ValueError, "next_node does not exist"):
+            runtime.resume(graph, Checkpoint("r3", "graph-v1", "missing", {}, 1, 1))
 
     def test_resume_from_file_checkpoint_updates_persisted_boundary(self) -> None:
         import tempfile
