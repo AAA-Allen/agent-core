@@ -2,10 +2,52 @@
 
 import unittest
 
-from agent_core import Graph, NodeResult, NodeStatus, RunStatus, Runtime
+from agent_core import (
+    Graph,
+    NodeResult,
+    NodeStatus,
+    RunStatus,
+    Runtime,
+    Tool,
+    ToolRegistry,
+    tool_step,
+)
 
 
 class GraphRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def _as_graph_node(step):
+        def execute(ctx):
+            outcome = step.execute(ctx)
+            status = {
+                "COMPLETED": NodeStatus.SUCCEEDED,
+                "BLOCKED": NodeStatus.BLOCKED,
+                "FAILED": NodeStatus.FAILED,
+            }[outcome.status.value]
+            return NodeResult(status, outcome.output, reason_code=outcome.reason_code)
+        return execute
+
+    def test_graph_can_reuse_tool_step_boundary(self) -> None:
+        registry = ToolRegistry()
+        registry.register(Tool("echo", lambda args: {"echo": args["value"]}))
+        step = tool_step("call", "echo", registry, lambda ctx: {"value": ctx.input["value"]})
+
+        graph = Graph().add_node("call", self._as_graph_node(step)).set_entry("call").compile()
+        result = Runtime().run(graph, {"value": "hello"})
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(result.state["echo"], "hello")
+
+    def test_graph_tool_boundary_preserves_denial_reason(self) -> None:
+        registry = ToolRegistry()
+        registry.register(
+            Tool("guarded", lambda args: {"ok": True}, required_capabilities=frozenset({"read"}))
+        )
+        step = tool_step("call", "guarded", registry, lambda ctx: {})
+        graph = Graph().add_node("call", self._as_graph_node(step)).set_entry("call").compile()
+        result = Runtime().run(graph, {})
+        self.assertEqual(result.status, RunStatus.BLOCKED)
+        self.assertEqual(result.reason_code, "CAPABILITY_DENIED")
+
     def test_default_edge_matches_only_without_a_route(self) -> None:
         calls: list[str] = []
         graph = (
