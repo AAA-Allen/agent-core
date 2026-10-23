@@ -209,6 +209,12 @@ class GraphRuntimeTests(unittest.TestCase):
         self.assertEqual(result.status, RunStatus.COMPLETED)
         self.assertEqual(result.state, {"a": 1, "b": 2})
         self.assertEqual(calls, ["second"])
+        self.assertTrue(result.trace)
+        self.assertTrue(all(event.run_id == "resume-1" for event in result.trace))
+        started = next(event for event in result.trace if event.event_type == "node.started")
+        committed = next(event for event in result.trace if event.event_type == "state.committed")
+        self.assertEqual(started.state_version, 1)
+        self.assertEqual(committed.state_version, 2)
 
     def test_resume_rejects_incompatible_or_terminal_checkpoint(self) -> None:
         from agent_core import Checkpoint
