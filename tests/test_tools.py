@@ -6,6 +6,7 @@ from agent_core import (
     RunStatus,
     Tool,
     ToolRegistry,
+    graph_tool_node,
     WorkflowRunner,
     tool_step,
 )
@@ -133,6 +134,26 @@ class ToolStepTests(unittest.TestCase):
         result = WorkflowRunner([workflow_step]).run({}, run_id="t4")
         self.assertEqual(result.status, RunStatus.BLOCKED)
         self.assertEqual(result.reason_code, "CAPABILITY_DENIED")
+
+
+class GraphToolNodeTests(unittest.TestCase):
+    def test_invalid_builder_arguments_are_rejected(self) -> None:
+        with self.assertRaises(TypeError):
+            graph_tool_node("echo", "not-a-registry", lambda ctx: {})
+        with self.assertRaises(TypeError):
+            graph_tool_node("echo", ToolRegistry(), {})
+
+    def test_capabilities_are_enforced_by_graph_adapter(self) -> None:
+        registry = ToolRegistry()
+        registry.register(
+            Tool("guarded", lambda args: {"ok": True}, required_capabilities=frozenset({"read"}))
+        )
+        denied = graph_tool_node("guarded", registry, lambda ctx: {})
+        self.assertEqual(denied(None).reason_code, "CAPABILITY_DENIED")
+        granted = graph_tool_node(
+            "guarded", registry, lambda ctx: {}, granted_capabilities=frozenset({"read"})
+        )
+        self.assertEqual(granted(None).status.value, "SUCCEEDED")
 
 
 if __name__ == "__main__":
