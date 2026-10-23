@@ -66,7 +66,17 @@ class RunLifecycle:
         _validate_run_id(run_id)
         self.run_id = run_id
         self._status = LifecycleStatus.PENDING
-        self._events: list[LifecycleEvent] = []
+        self._events: list[LifecycleEvent] = [
+            LifecycleEvent(
+                run_id=run_id,
+                sequence=1,
+                event_id=uuid4().hex,
+                event_type="run.created",
+                from_status=None,
+                to_status=LifecycleStatus.PENDING,
+                occurred_at=datetime.now(timezone.utc).isoformat(),
+            )
+        ]
 
     @property
     def status(self) -> LifecycleStatus:

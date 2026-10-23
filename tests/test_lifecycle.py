@@ -12,9 +12,9 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(lifecycle.terminal)
         self.assertEqual(
             [event.event_type for event in lifecycle.events],
-            ["run.running", "run.completed"],
+            ["run.created", "run.running", "run.completed"],
         )
-        self.assertEqual([event.sequence for event in lifecycle.events], [1, 2])
+        self.assertEqual([event.sequence for event in lifecycle.events], [1, 2, 3])
 
     def test_blocked_failed_and_canceled_are_distinct_terminal_states(self) -> None:
         for target in (LifecycleStatus.BLOCKED, LifecycleStatus.FAILED, LifecycleStatus.CANCELED):

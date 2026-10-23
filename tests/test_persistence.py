@@ -224,7 +224,7 @@ class GraphRuntimePersistenceTests(unittest.TestCase):
         loaded = self.store.load("persisted-cancel")
         self.assertEqual(
             [event.event_type for event in loaded.lifecycle_events],
-            ["run.running", "run.canceled"],
+            ["run.created", "run.running", "run.canceled"],
         )
         self.assertEqual(loaded.lifecycle_events[-1].to_status.value, "CANCELED")
 

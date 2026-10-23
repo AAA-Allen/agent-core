@@ -225,7 +225,7 @@ class GraphRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.get_status("lifecycle-run"), LifecycleStatus.COMPLETED)
         self.assertEqual(
             [event.event_type for event in runtime.get_lifecycle_events("lifecycle-run")],
-            ["run.running", "run.completed"],
+            ["run.created", "run.running", "run.completed"],
         )
         self.assertIsNone(runtime.get_status("unknown-run"))
 
