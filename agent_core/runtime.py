@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from time import monotonic
@@ -112,6 +112,7 @@ class RunResult:
     reason_code: str | None = None
     state: Mapping[str, Any] | None = None
     simulated: bool = False
+    lifecycle_events: tuple[Any, ...] = ()
 
     def __post_init__(self) -> None:
         if self.state is None:
@@ -255,6 +256,7 @@ class Runtime:
             self._finish_lifecycle(lifecycle, RunStatus.FAILED, reason_code="RUNTIME_EXCEPTION")
             raise
         self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
+        result = replace(result, lifecycle_events=lifecycle.events)
         with self._cancel_lock:
             self._cancel_requests.discard(identity)
         return result
@@ -290,6 +292,7 @@ class Runtime:
             self._finish_lifecycle(lifecycle, RunStatus.FAILED, reason_code="RUNTIME_EXCEPTION")
             raise
         self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
+        result = replace(result, lifecycle_events=lifecycle.events)
         with self._cancel_lock:
             self._cancel_requests.discard(checkpoint.run_id)
         return result

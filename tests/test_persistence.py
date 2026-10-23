@@ -202,6 +202,31 @@ class GraphRuntimePersistenceTests(unittest.TestCase):
             [event.event_type for event in loaded.trace],
             [event.event_type for event in result.trace],
         )
+        self.assertEqual(loaded.lifecycle_events, result.lifecycle_events)
+
+    def test_graph_lifecycle_events_roundtrip_for_canceled_run(self) -> None:
+        from agent_core import Runtime
+
+        runtime = Runtime()
+
+        def stop(ctx):
+            runtime.cancel(ctx.run_id)
+            return NodeResult.success({}, route="next")
+
+        graph = (
+            Graph().add_node("stop", stop)
+            .add_node("never", lambda ctx: NodeResult.success())
+            .set_entry("stop").add_edge("stop", "never", when="next").compile()
+        )
+        result = runtime.run(graph, {}, run_id="persisted-cancel")
+        self.assertEqual(result.status, RunStatus.CANCELED)
+        self.store.save(result)
+        loaded = self.store.load("persisted-cancel")
+        self.assertEqual(
+            [event.event_type for event in loaded.lifecycle_events],
+            ["run.running", "run.canceled"],
+        )
+        self.assertEqual(loaded.lifecycle_events[-1].to_status.value, "CANCELED")
 
 
 if __name__ == "__main__":

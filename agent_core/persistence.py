@@ -1,9 +1,8 @@
 """Minimal run persistence: save and load finished workflow runs as JSON files.
 
-Scope is deliberately small: a finished run (COMPLETED, BLOCKED or FAILED) is
-written to one JSON file per run_id. No resume, cancel, retry, or event
-sourcing — those belong to later stages. Writes are atomic (tmp file plus
-rename) so an interrupted save never leaves a half-written record behind.
+Scope is deliberately small: a finished run is written to one JSON file per
+run_id, including its lifecycle events. It is not an event-sourcing store and
+does not provide automatic resume, retry, or cancellation.
 """
 
 from __future__ import annotations
@@ -14,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .runtime import RunResult, RunStatus, TraceEvent, _validate_run_id
+from .lifecycle import LifecycleEvent, LifecycleStatus
 
 
 class RunStore:
@@ -71,6 +71,7 @@ def _result_to_dict(result: RunResult) -> dict:
         "reason_code": result.reason_code,
         "state": dict(result.state if result.state is not None else result.outputs),
         "simulated": result.simulated,
+        "lifecycle_events": [_lifecycle_event_to_dict(event) for event in result.lifecycle_events],
     }
 
 
@@ -101,6 +102,9 @@ def _dict_to_result(payload: dict) -> RunResult:
         )
         for event in payload["trace"]
     )
+    lifecycle_events = tuple(
+        _dict_to_lifecycle_event(event) for event in payload.get("lifecycle_events", [])
+    )
     return RunResult(
         run_id=payload["run_id"],
         status=RunStatus(payload["status"]),
@@ -110,4 +114,34 @@ def _dict_to_result(payload: dict) -> RunResult:
         reason_code=payload.get("reason_code"),
         state=payload.get("state", payload["outputs"]),
         simulated=payload.get("simulated", False),
+        lifecycle_events=lifecycle_events,
+    )
+
+
+def _lifecycle_event_to_dict(event: LifecycleEvent) -> dict:
+    return {
+        "run_id": event.run_id,
+        "sequence": event.sequence,
+        "event_id": event.event_id,
+        "event_type": event.event_type,
+        "from_status": None if event.from_status is None else event.from_status.value,
+        "to_status": event.to_status.value,
+        "occurred_at": event.occurred_at,
+        "reason_code": event.reason_code,
+    }
+
+
+def _dict_to_lifecycle_event(payload: dict) -> LifecycleEvent:
+    if not isinstance(payload, dict):
+        raise TypeError("lifecycle event must be an object")
+    return LifecycleEvent(
+        run_id=payload["run_id"],
+        sequence=payload["sequence"],
+        event_id=payload["event_id"],
+        event_type=payload["event_type"],
+        from_status=(None if payload.get("from_status") is None
+                     else LifecycleStatus(payload["from_status"])),
+        to_status=LifecycleStatus(payload["to_status"]),
+        occurred_at=payload["occurred_at"],
+        reason_code=payload.get("reason_code"),
     )
