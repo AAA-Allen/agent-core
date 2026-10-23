@@ -215,6 +215,14 @@ class GraphRuntimeTests(unittest.TestCase):
         self.assertEqual(result.reason_code, "INVALID_STATE_UPDATE")
         self.assertEqual(result.state, {"input": "original"})
 
+    def test_nested_non_string_update_key_is_rejected(self) -> None:
+        graph = Graph().add_node(
+            "bad", lambda ctx: NodeResult.success({"nested": {1: "invalid"}})
+        ).set_entry("bad").compile()
+        result = Runtime().run(graph, {})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "INVALID_STATE_UPDATE")
+
 
 if __name__ == "__main__":
     unittest.main()

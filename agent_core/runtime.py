@@ -183,9 +183,19 @@ class WorkflowRunner:
 
 def _json_snapshot(value: Mapping[str, Any]) -> dict[str, Any]:
     """Detach step data and reject non-finite or non-JSON workflow payloads."""
-    if any(not isinstance(key, str) for key in value):
-        raise TypeError("JSON object keys must be strings")
+    _validate_json_keys(value)
     return json.loads(json.dumps(dict(value), ensure_ascii=False, allow_nan=False))
+
+
+def _validate_json_keys(value: Any) -> None:
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("JSON object keys must be strings")
+        for item in value.values():
+            _validate_json_keys(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_json_keys(item)
 
 
 _RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
