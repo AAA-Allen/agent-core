@@ -10,29 +10,19 @@ from agent_core import (
     Runtime,
     Tool,
     ToolRegistry,
+    graph_tool_node,
     tool_step,
 )
 
 
 class GraphRuntimeTests(unittest.TestCase):
-    @staticmethod
-    def _as_graph_node(step):
-        def execute(ctx):
-            outcome = step.execute(ctx)
-            status = {
-                "COMPLETED": NodeStatus.SUCCEEDED,
-                "BLOCKED": NodeStatus.BLOCKED,
-                "FAILED": NodeStatus.FAILED,
-            }[outcome.status.value]
-            return NodeResult(status, outcome.output, reason_code=outcome.reason_code)
-        return execute
-
     def test_graph_can_reuse_tool_step_boundary(self) -> None:
         registry = ToolRegistry()
         registry.register(Tool("echo", lambda args: {"echo": args["value"]}))
-        step = tool_step("call", "echo", registry, lambda ctx: {"value": ctx.input["value"]})
 
-        graph = Graph().add_node("call", self._as_graph_node(step)).set_entry("call").compile()
+        graph = Graph().add_node(
+            "call", graph_tool_node("echo", registry, lambda ctx: {"value": ctx.input["value"]})
+        ).set_entry("call").compile()
         result = Runtime().run(graph, {"value": "hello"})
         self.assertEqual(result.status, RunStatus.COMPLETED)
         self.assertEqual(result.state["echo"], "hello")
@@ -42,8 +32,9 @@ class GraphRuntimeTests(unittest.TestCase):
         registry.register(
             Tool("guarded", lambda args: {"ok": True}, required_capabilities=frozenset({"read"}))
         )
-        step = tool_step("call", "guarded", registry, lambda ctx: {})
-        graph = Graph().add_node("call", self._as_graph_node(step)).set_entry("call").compile()
+        graph = Graph().add_node(
+            "call", graph_tool_node("guarded", registry, lambda ctx: {})
+        ).set_entry("call").compile()
         result = Runtime().run(graph, {})
         self.assertEqual(result.status, RunStatus.BLOCKED)
         self.assertEqual(result.reason_code, "CAPABILITY_DENIED")
@@ -56,11 +47,10 @@ class GraphRuntimeTests(unittest.TestCase):
             registry = ToolRegistry()
             if tool_name == "boom":
                 registry.register(Tool("boom", lambda args: (_ for _ in ()).throw(RuntimeError("secret"))))
-            step = tool_step("call", tool_name, registry, lambda ctx: {})
             calls: list[str] = []
             graph = (
                 Graph()
-                .add_node("call", self._as_graph_node(step))
+                .add_node("call", graph_tool_node(tool_name, registry, lambda ctx: {}))
                 .add_node("downstream", lambda ctx: (calls.append("downstream") or NodeResult.success()))
                 .set_entry("call")
                 .add_edge("call", "downstream")

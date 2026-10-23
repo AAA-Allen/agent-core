@@ -7,6 +7,8 @@ from enum import Enum
 from typing import Any, Callable, Mapping
 
 from .runtime import RunContext, Step, StepOutcome, StepStatus, _json_snapshot
+from .graph import NodeContext
+from .results import NodeResult, NodeStatus
 
 
 class ToolStatus(str, Enum):
@@ -107,3 +109,33 @@ def tool_step(
         return StepOutcome(status, result.output, result.reason_code)
 
     return Step(step_name, execute)
+
+
+def graph_tool_node(
+    tool_name: str,
+    registry: ToolRegistry,
+    arguments: Callable[[NodeContext], Mapping[str, Any]],
+    *,
+    granted_capabilities: frozenset[str] = frozenset(),
+) -> Callable[[NodeContext], NodeResult]:
+    """Adapt a registered Tool into a v0.1 Graph node."""
+    if not isinstance(registry, ToolRegistry):
+        raise TypeError("registry must be a ToolRegistry")
+    if not callable(arguments):
+        raise TypeError("arguments must be callable")
+
+    def execute(context: NodeContext) -> NodeResult:
+        result = registry.invoke(
+            tool_name, arguments(context), granted_capabilities=granted_capabilities,
+        )
+        status = {
+            ToolStatus.COMPLETED: NodeStatus.SUCCEEDED,
+            ToolStatus.BLOCKED: NodeStatus.BLOCKED,
+            ToolStatus.FAILED: NodeStatus.FAILED,
+        }[result.status]
+        return NodeResult(
+            status, result.output, reason_code=result.reason_code,
+            output=result.output,
+        )
+
+    return execute
