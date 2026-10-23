@@ -277,6 +277,21 @@ class GraphRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Runtime(timeout_seconds=True)
 
+    def test_runtime_records_blocked_and_failed_lifecycle_events(self) -> None:
+        cases = (
+            ("blocked", NodeResult.blocked("WAITING"), "run.blocked"),
+            ("failed", NodeResult.failed("BROKEN"), "run.failed"),
+        )
+        from agent_core import LifecycleStatus
+        for run_id, node_result, event_type in cases:
+            with self.subTest(run_id=run_id):
+                graph = Graph().add_node("stop", lambda ctx, value=node_result: value).set_entry("stop").compile()
+                runtime = Runtime()
+                result = runtime.run(graph, {}, run_id=run_id)
+                self.assertEqual(result.status.value, run_id.upper())
+                self.assertEqual(result.lifecycle_events[-1].event_type, event_type)
+                self.assertEqual(runtime.get_status(run_id).value, run_id.upper())
+
     def test_external_thread_can_request_cooperative_cancellation(self) -> None:
         import threading
 
