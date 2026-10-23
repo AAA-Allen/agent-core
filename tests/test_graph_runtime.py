@@ -162,6 +162,38 @@ class GraphRuntimeTests(unittest.TestCase):
             self.assertEqual(loaded.state_version, 1)
             self.assertEqual(loaded.step_count, 1)
 
+    def test_runtime_checkpoint_records_next_node_on_route(self) -> None:
+        from agent_core import InMemoryCheckpointStore
+
+        store = InMemoryCheckpointStore()
+        saved = []
+        original_save = store.save
+
+        def record(checkpoint):
+            saved.append(checkpoint)
+            original_save(checkpoint)
+
+        store.save = record
+        graph = (
+            Graph()
+            .add_node("first", lambda ctx: NodeResult.success({"value": 1}, route="next"))
+            .add_node("second", lambda ctx: NodeResult.success({"done": True}))
+            .set_entry("first")
+            .add_edge("first", "second", when="next")
+            .compile()
+        )
+        result = Runtime(checkpoint_store=store, graph_id="graph-v1").run(
+            graph, {}, run_id="routed-checkpoint"
+        )
+        checkpoint = store.load("routed-checkpoint")
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(checkpoint.next_node, None)
+        self.assertEqual(checkpoint.state, {"value": 1, "done": True})
+        self.assertEqual(checkpoint.state_version, 2)
+        self.assertEqual(checkpoint.step_count, 2)
+        self.assertEqual([(item.next_node, item.state_version, item.step_count) for item in saved],
+                         [("second", 1, 1), (None, 2, 2)])
+
     def test_checkpoint_store_failure_fails_run_without_retry(self) -> None:
         class BrokenStore:
             def save(self, checkpoint):
