@@ -276,10 +276,10 @@ run.completed | run.blocked | run.failed
 
 ### 工具和兼容性
 
-- 现有 57 个测试全部继续通过。
+- 现有 109 个测试全部继续通过。
 - 图节点通过 `tool_step` 调用工具时，`TOOL_NOT_FOUND`、`CAPABILITY_DENIED` 和 `TOOL_EXCEPTION` 语义不变。
 - 工具被能力拒绝时，工具函数本身不会执行。
-- 不存在的 `ModelAdapter`、`Replay`、`Checkpoint` 不应出现在 v0.1 的公共导出中。
+- `ModelAdapter`、`Replay` 尚未实现；`Checkpoint` 属于 v0.2 扩展，不改变 v0.1 的公共接口。
 
 ## 7. 实施顺序
 
