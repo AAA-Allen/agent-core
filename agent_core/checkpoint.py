@@ -55,6 +55,9 @@ class InMemoryCheckpointStore:
     def save(self, checkpoint: Checkpoint) -> None:
         if not isinstance(checkpoint, Checkpoint):
             raise TypeError("checkpoint must be a Checkpoint")
+        existing = self._records.get(checkpoint.run_id)
+        if existing is not None and checkpoint.state_version < existing.state_version:
+            raise ValueError("checkpoint state_version cannot move backwards")
         self._records[checkpoint.run_id] = Checkpoint(
             checkpoint.run_id, checkpoint.graph_id, checkpoint.next_node,
             checkpoint.state, checkpoint.state_version, checkpoint.step_count,

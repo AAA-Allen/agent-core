@@ -34,6 +34,12 @@ class CheckpointTests(unittest.TestCase):
         store.delete("run-1")
         self.assertIsNone(store.load("run-1"))
 
+    def test_memory_store_rejects_older_checkpoint(self) -> None:
+        store = InMemoryCheckpointStore()
+        store.save(Checkpoint("run-1", "graph-v1", "next", {}, 2, 2))
+        with self.assertRaisesRegex(ValueError, "cannot move backwards"):
+            store.save(Checkpoint("run-1", "graph-v1", "old", {}, 1, 1))
+
 
 if __name__ == "__main__":
     unittest.main()
