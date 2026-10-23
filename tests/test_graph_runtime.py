@@ -48,6 +48,30 @@ class GraphRuntimeTests(unittest.TestCase):
         self.assertEqual(result.status, RunStatus.BLOCKED)
         self.assertEqual(result.reason_code, "CAPABILITY_DENIED")
 
+    def test_graph_tool_failure_and_missing_tool_stop_downstream(self) -> None:
+        for tool_name, expected_status, expected_reason in (
+            ("missing", RunStatus.BLOCKED, "TOOL_NOT_FOUND"),
+            ("boom", RunStatus.FAILED, "TOOL_EXCEPTION"),
+        ):
+            registry = ToolRegistry()
+            if tool_name == "boom":
+                registry.register(Tool("boom", lambda args: (_ for _ in ()).throw(RuntimeError("secret"))))
+            step = tool_step("call", tool_name, registry, lambda ctx: {})
+            calls: list[str] = []
+            graph = (
+                Graph()
+                .add_node("call", self._as_graph_node(step))
+                .add_node("downstream", lambda ctx: (calls.append("downstream") or NodeResult.success()))
+                .set_entry("call")
+                .add_edge("call", "downstream")
+                .compile()
+            )
+            result = Runtime().run(graph, {})
+            self.assertEqual(result.status, expected_status)
+            self.assertEqual(result.reason_code, expected_reason)
+            self.assertEqual(calls, [])
+            self.assertNotIn("secret", str(result.trace))
+
     def test_default_edge_matches_only_without_a_route(self) -> None:
         calls: list[str] = []
         graph = (
