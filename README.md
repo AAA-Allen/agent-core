@@ -88,6 +88,18 @@ if checkpoint is not None and checkpoint.next_node is not None:
 
 恢复不会重放 checkpoint 之前的节点，也不提供外部副作用的 exactly-once 保证；调用方仍需为工具调用设计幂等策略。
 
+### 运行生命周期
+
+Runtime 为每个运行维护以下状态：`PENDING`、`RUNNING`、`COMPLETED`、`BLOCKED`、`FAILED` 和 `CANCELED`。普通运行从 `PENDING` 进入 `RUNNING`，然后进入一个终态；终态不会被普通状态更新覆盖。显式 `resume()` 是从带有非终态 checkpoint 的失败运行重新进入 `RUNNING` 的专用入口。
+
+```python
+status = runtime.get_status(result.run_id)
+events = runtime.get_lifecycle_events(result.run_id)
+accepted = runtime.cancel(result.run_id)
+```
+
+`cancel()` 只发出协作式取消请求。Runtime 会在节点开始前或节点返回后确认请求，无法安全强制中断正在运行的同步 Python 函数。`timeout_seconds` 也只在节点边界生效；超时返回 `CANCELED`，原因码为 `TIMEOUT`，不会伪装成普通业务失败。终态结果及其生命周期事件会由 `RunStore` 一起保存。
+
 ### 公共 API
 
 ```python
@@ -115,7 +127,7 @@ assert result.status.value == "COMPLETED"
 ## 后续能力边界
 
 - 没有 LLM 自主规划、多 Agent 协商、并行节点、人工等待节点
-- 没有取消、超时强制中断、重试、调用预算、幂等键
+- 没有强制中断、重试、调用预算、幂等键
 - 工具能力集合是**进程内逻辑约束**，不是操作系统沙箱或真正的身份鉴权
 - 持久化覆盖节点边界 checkpoint 的落盘与读回，不负责跨进程自动调度或清理策略
 

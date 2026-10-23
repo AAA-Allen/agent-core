@@ -19,11 +19,11 @@
 - [x] F. 超时语义
 - [x] G. 生命周期事件与持久化
 - [x] H. 并发边界与错误处理
-- [ ] I. 全量回归、兼容性检查和文档更新
+- [x] I. 全量回归、兼容性检查和文档更新
 
 ## Latest Verification
 
-最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 115 passed。
+最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 121 passed。
 
 ## Known Limits
 
@@ -33,3 +33,9 @@
 - `timeout_seconds` 在节点边界确认，超时返回 `CANCELED`/`TIMEOUT`；无法强制中断同步节点。
 - `RunStore` 保存终态 `RunResult` 及其生命周期事件；旧 JSON 记录缺少事件字段时按空事件兼容。
 - 仅支持外部线程发出协作式取消请求；不提供并行节点调度或通用线程安全承诺。
+
+## Acceptance
+
+- 生命周期状态机已接入 `Runtime.run()` 和 `Runtime.resume()`。
+- 六种状态、合法转换、终态保护、查询、取消、超时和生命周期事件持久化均有测试。
+- 未实现：强制中断、重试、并行调度、分布式锁和 exactly-once 外部副作用保证。

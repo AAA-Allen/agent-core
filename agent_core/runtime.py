@@ -217,8 +217,8 @@ class Runtime:
 
     This is intentionally separate from WorkflowRunner so the existing linear
     API remains compatible while Graph Runtime behavior is introduced. It
-    supports optional boundary checkpoints and explicit resume; it does not
-    provide retries, cancellation, or parallelism.
+    supports optional boundary checkpoints, explicit resume, and cooperative
+    cancellation/timeout; it does not provide retries or parallelism.
     """
 
     def __init__(self, *, max_steps: int = 100, checkpoint_store: Any = None,
