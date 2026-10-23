@@ -23,7 +23,7 @@
 
 ## Latest Verification
 
-最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 121 passed。
+最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 122 passed。
 
 ## Known Limits
 
