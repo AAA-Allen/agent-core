@@ -9,6 +9,7 @@ from .graph import CompiledGraph, Edge, Graph, Node, NodeContext
 from .results import NodeResult, NodeStatus
 from .runtime import Runtime
 from .checkpoint import Checkpoint, CheckpointStore, FileCheckpointStore, InMemoryCheckpointStore
+from .lifecycle import LifecycleEvent, LifecycleStatus, RunLifecycle
 
 __all__ = [
     "RunContext", "RunResult", "RunStatus", "Step", "StepOutcome", "StepStatus",
@@ -17,5 +18,6 @@ __all__ = [
     "Graph", "CompiledGraph", "Node", "Edge", "NodeContext", "Runtime",
     "NodeResult", "NodeStatus",
     "Checkpoint", "CheckpointStore", "InMemoryCheckpointStore", "FileCheckpointStore",
+    "LifecycleEvent", "LifecycleStatus", "RunLifecycle",
     "__version__",
 ]
