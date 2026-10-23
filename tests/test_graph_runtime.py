@@ -277,6 +277,35 @@ class GraphRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Runtime(timeout_seconds=True)
 
+    def test_external_thread_can_request_cooperative_cancellation(self) -> None:
+        import threading
+
+        started = threading.Event()
+        release = threading.Event()
+        holder: dict[str, object] = {}
+        runtime = Runtime()
+
+        def slow(ctx):
+            started.set()
+            release.wait(1)
+            return NodeResult.success()
+
+        graph = Graph().add_node("slow", slow).set_entry("slow").compile()
+
+        def execute() -> None:
+            holder["result"] = runtime.run(graph, {}, run_id="thread-cancel")
+
+        worker = threading.Thread(target=execute)
+        worker.start()
+        self.assertTrue(started.wait(1))
+        from agent_core import LifecycleStatus
+        self.assertEqual(runtime.get_status("thread-cancel"), LifecycleStatus.RUNNING)
+        self.assertTrue(runtime.cancel("thread-cancel"))
+        release.set()
+        worker.join(1)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(holder["result"].status, RunStatus.CANCELED)
+
     def test_resume_rejects_incompatible_or_terminal_checkpoint(self) -> None:
         from agent_core import Checkpoint
 

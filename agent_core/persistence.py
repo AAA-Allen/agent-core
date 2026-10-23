@@ -105,6 +105,11 @@ def _dict_to_result(payload: dict) -> RunResult:
     lifecycle_events = tuple(
         _dict_to_lifecycle_event(event) for event in payload.get("lifecycle_events", [])
     )
+    for expected_sequence, event in enumerate(lifecycle_events, start=1):
+        if event.run_id != payload["run_id"]:
+            raise ValueError("lifecycle event run_id does not match run record")
+        if event.sequence != expected_sequence:
+            raise ValueError("lifecycle event sequence is not contiguous")
     return RunResult(
         run_id=payload["run_id"],
         status=RunStatus(payload["status"]),

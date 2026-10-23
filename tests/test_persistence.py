@@ -228,6 +228,18 @@ class GraphRuntimePersistenceTests(unittest.TestCase):
         )
         self.assertEqual(loaded.lifecycle_events[-1].to_status.value, "CANCELED")
 
+    def test_run_store_rejects_mismatched_lifecycle_event(self) -> None:
+        path = Path(self._tmp.name) / "bad-lifecycle.json"
+        path.write_text(
+            '{"run_id":"bad-lifecycle","status":"COMPLETED","outputs":{},"trace":[],'
+            '"lifecycle_events":[{"run_id":"other","sequence":1,"event_id":"e",'
+            '"event_type":"run.running","from_status":"PENDING","to_status":"RUNNING",'
+            '"occurred_at":"2026-10-24T00:00:00+00:00"}]}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid run record"):
+            self.store.load("bad-lifecycle")
+
 
 if __name__ == "__main__":
     unittest.main()
