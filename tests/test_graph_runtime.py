@@ -137,6 +137,15 @@ class GraphRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Graph().add_node("a", lambda ctx: NodeResult.success()).add_node("a", lambda ctx: NodeResult.success())
 
+        graph = (
+            Graph().add_node("a", lambda ctx: NodeResult.success())
+            .add_node("b", lambda ctx: NodeResult.success())
+            .set_entry("a")
+            .add_edge("a", "b", when="next")
+        )
+        with self.assertRaises(ValueError):
+            graph.add_edge("a", "b", when="next")
+
     def test_compiled_graph_is_an_immutable_snapshot(self) -> None:
         graph = Graph().add_node("a", lambda ctx: NodeResult.success()).set_entry("a")
         compiled = graph.compile()
