@@ -10,6 +10,12 @@ python examples/text_pipeline.py
 python -m examples.text_pipeline
 ```
 
+Graph Runtime 示例：
+
+```bash
+python -m examples.graph_pipeline
+```
+
 ## 流程
 
 ```
@@ -23,3 +29,5 @@ normalize（工具）→ validate（自定义步骤）→ analyze（工具）→
 ## 行为保护
 
 `tests/test_examples.py` 覆盖完成路径、阻断路径与 Trace 完整性，示例改坏会被测试抓住。
+
+`graph_pipeline.py` 展示 v0.1 的 `Graph`、条件路由、状态更新和 `BLOCKED` 终态。

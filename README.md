@@ -76,6 +76,30 @@ result = Runtime().run(graph, input={"text": "hello"})
 
 当前 v0.1 不包含 Checkpoint、恢复、重试、取消、并行、LLM 或多 Agent 调度。
 
+### 公共 API
+
+```python
+from agent_core import Graph, NodeResult, NodeStatus, Runtime
+
+def validate(ctx):
+    if not ctx.input.get("text"):
+        return NodeResult.blocked("EMPTY_TEXT")
+    return NodeResult.success({"valid": True}, route="valid")
+
+graph = (
+    Graph()
+    .add_node("validate", validate)
+    .add_node("finish", lambda ctx: NodeResult.success({"done": True}))
+    .set_entry("validate")
+    .add_edge("validate", "finish", when="valid")
+    .compile()
+)
+result = Runtime().run(graph, {"text": "hello"})
+assert result.status.value == "COMPLETED"
+```
+
+节点通过 `ctx.state` 读取当前状态，通过 `NodeResult.success(updates, route=...)` 请求状态更新和路由。Runtime 负责校验、合并和 Trace；节点不能直接修改共享状态。
+
 ## 后续能力边界
 
 - 没有 LLM 自主规划、多 Agent 协商、并行节点、人工等待节点
