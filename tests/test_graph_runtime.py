@@ -325,6 +325,34 @@ class GraphRuntimeTests(unittest.TestCase):
         from agent_core import LifecycleStatus
         self.assertEqual(runtime.get_status("store-failure"), LifecycleStatus.COMPLETED)
 
+    def test_runtime_store_exposes_running_lifecycle_to_fresh_instance(self) -> None:
+        import tempfile
+        import threading
+        from pathlib import Path
+        from agent_core import LifecycleStatus, RunStore
+
+        started = threading.Event()
+        release = threading.Event()
+        graph = Graph().add_node(
+            "slow",
+            lambda ctx: (started.set() or release.wait(1) or NodeResult.success()),
+        ).set_entry("slow").compile()
+        with tempfile.TemporaryDirectory() as directory:
+            store = RunStore(Path(directory))
+            runtime = Runtime(store=store)
+            worker = threading.Thread(target=lambda: runtime.run(graph, {}, run_id="running-query"))
+            worker.start()
+            self.assertTrue(started.wait(1))
+            fresh = Runtime(store=store)
+            self.assertEqual(fresh.get_status("running-query"), LifecycleStatus.RUNNING)
+            self.assertEqual(
+                [event.event_type for event in fresh.get_lifecycle_events("running-query")],
+                ["run.created", "run.running"],
+            )
+            release.set()
+            worker.join(1)
+            self.assertFalse(worker.is_alive())
+
     def test_external_thread_can_request_cooperative_cancellation(self) -> None:
         import threading
 

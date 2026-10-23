@@ -260,8 +260,10 @@ class Runtime:
             result = self._execute(graph, input, run_id=identity)
         except Exception:
             self._finish_lifecycle(lifecycle, RunStatus.FAILED, reason_code="RUNTIME_EXCEPTION")
+            self._persist_lifecycle(lifecycle)
             raise
         self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
+        self._persist_lifecycle(lifecycle)
         result = replace(result, lifecycle_events=lifecycle.events)
         self._persist_result(result)
         with self._cancel_lock:
@@ -288,6 +290,7 @@ class Runtime:
             lifecycle = self._begin_lifecycle(checkpoint.run_id)
         else:
             lifecycle.resume()
+            self._persist_lifecycle(lifecycle)
         try:
             result = self._execute(
                 graph, checkpoint.state, run_id=checkpoint.run_id,
@@ -297,8 +300,10 @@ class Runtime:
             )
         except Exception:
             self._finish_lifecycle(lifecycle, RunStatus.FAILED, reason_code="RUNTIME_EXCEPTION")
+            self._persist_lifecycle(lifecycle)
             raise
         self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
+        self._persist_lifecycle(lifecycle)
         result = replace(result, lifecycle_events=lifecycle.events)
         self._persist_result(result)
         with self._cancel_lock:
@@ -314,6 +319,12 @@ class Runtime:
         if lifecycle is not None:
             return lifecycle.status
         if self._store is not None:
+            load_events = getattr(self._store, "load_lifecycle_events", None)
+            if callable(load_events):
+                events = load_events(run_id)
+                if events:
+                    from .lifecycle import LifecycleStatus
+                    return events[-1].to_status
             stored = self._store.load(run_id)
             if stored is not None:
                 from .lifecycle import LifecycleStatus
@@ -327,6 +338,11 @@ class Runtime:
         if lifecycle is not None:
             return lifecycle.events
         if self._store is not None:
+            load_events = getattr(self._store, "load_lifecycle_events", None)
+            if callable(load_events):
+                events = load_events(run_id)
+                if events:
+                    return events
             stored = self._store.load(run_id)
             if stored is not None:
                 return stored.lifecycle_events
@@ -335,6 +351,13 @@ class Runtime:
     def _persist_result(self, result: RunResult) -> None:
         if self._store is not None:
             self._store.save(result)
+
+    def _persist_lifecycle(self, lifecycle: Any) -> None:
+        if self._store is None:
+            return
+        save_events = getattr(self._store, "save_lifecycle_events", None)
+        if callable(save_events):
+            save_events(lifecycle.run_id, lifecycle.events)
 
     def cancel(self, run_id: str) -> bool:
         """Request cooperative cancellation; return whether it was accepted."""
@@ -366,6 +389,7 @@ class Runtime:
         lifecycle = RunLifecycle(run_id)
         lifecycle.transition(LifecycleStatus.RUNNING)
         self._lifecycles[run_id] = lifecycle
+        self._persist_lifecycle(lifecycle)
         return lifecycle
 
     @staticmethod

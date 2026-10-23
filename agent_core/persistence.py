@@ -58,7 +58,47 @@ class RunStore:
         """Return saved run_ids in filename order."""
         if not self._directory.is_dir():
             return []
-        return sorted(path.stem for path in self._directory.glob("*.json"))
+        return sorted(
+            path.stem for path in self._directory.glob("*.json")
+            if not path.name.endswith(".events.json")
+        )
+
+    def save_lifecycle_events(self, run_id: str, events: tuple[LifecycleEvent, ...]) -> Path:
+        """Atomically persist the lifecycle event sequence for a run."""
+        _validate_run_id(run_id)
+        for expected_sequence, event in enumerate(events, start=1):
+            if event.run_id != run_id or event.sequence != expected_sequence:
+                raise ValueError("invalid lifecycle event sequence")
+        self._directory.mkdir(parents=True, exist_ok=True)
+        target = self._directory / f"{run_id}.events.json"
+        tmp = self._directory / f".{run_id}.{uuid4().hex}.events.json.tmp"
+        tmp.write_text(
+            json.dumps({
+                "run_id": run_id,
+                "events": [_lifecycle_event_to_dict(event) for event in events],
+            }, ensure_ascii=False, indent=2, allow_nan=False),
+            encoding="utf-8",
+        )
+        tmp.replace(target)
+        return target
+
+    def load_lifecycle_events(self, run_id: str) -> tuple[LifecycleEvent, ...]:
+        """Load lifecycle events, returning an empty sequence when absent."""
+        _validate_run_id(run_id)
+        target = self._directory / f"{run_id}.events.json"
+        if not target.is_file():
+            return ()
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict) or payload.get("run_id") != run_id:
+                raise ValueError("lifecycle run_id does not match filename")
+            events = tuple(_dict_to_lifecycle_event(event) for event in payload["events"])
+            for expected_sequence, event in enumerate(events, start=1):
+                if event.run_id != run_id or event.sequence != expected_sequence:
+                    raise ValueError("invalid lifecycle event sequence")
+            return events
+        except (OSError, json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
+            raise ValueError("invalid lifecycle event record") from exc
 
 
 def _result_to_dict(result: RunResult) -> dict:
