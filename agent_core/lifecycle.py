@@ -136,5 +136,25 @@ class RunLifecycle:
         self._events.append(event)
         return event
 
+    @classmethod
+    def from_events(cls, events: tuple[LifecycleEvent, ...]) -> "RunLifecycle":
+        """Rehydrate a lifecycle from a validated persisted event sequence."""
+        if not events:
+            raise ValueError("lifecycle event sequence cannot be empty")
+        run_id = events[0].run_id
+        _validate_run_id(run_id)
+        for expected_sequence, event in enumerate(events, start=1):
+            if event.run_id != run_id or event.sequence != expected_sequence:
+                raise ValueError("invalid lifecycle event sequence")
+        first = events[0]
+        if first.event_type != "run.created" or first.from_status is not None \
+                or first.to_status is not LifecycleStatus.PENDING:
+            raise ValueError("lifecycle event sequence must start with run.created")
+        instance = cls.__new__(cls)
+        instance.run_id = run_id
+        instance._status = events[-1].to_status
+        instance._events = list(events)
+        return instance
+
 
 __all__ = ["LifecycleEvent", "LifecycleStatus", "RunLifecycle"]

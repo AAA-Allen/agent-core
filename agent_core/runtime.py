@@ -287,7 +287,13 @@ class Runtime:
             raise ValueError("checkpoint next_node does not exist in graph")
         lifecycle = self._lifecycles.get(checkpoint.run_id)
         if lifecycle is None:
-            lifecycle = self._begin_lifecycle(checkpoint.run_id)
+            lifecycle = self._load_persisted_lifecycle(checkpoint.run_id)
+            if lifecycle is None:
+                lifecycle = self._begin_lifecycle(checkpoint.run_id)
+            else:
+                self._lifecycles[checkpoint.run_id] = lifecycle
+                lifecycle.resume()
+                self._persist_lifecycle(lifecycle)
         else:
             lifecycle.resume()
             self._persist_lifecycle(lifecycle)
@@ -386,11 +392,26 @@ class Runtime:
         _validate_run_id(run_id)
         if run_id in self._lifecycles:
             raise ValueError("run_id already has a lifecycle")
+        existing = self._load_persisted_lifecycle(run_id)
+        if existing is not None:
+            raise ValueError("run_id already has a persisted lifecycle")
         lifecycle = RunLifecycle(run_id)
         lifecycle.transition(LifecycleStatus.RUNNING)
         self._lifecycles[run_id] = lifecycle
         self._persist_lifecycle(lifecycle)
         return lifecycle
+
+    def _load_persisted_lifecycle(self, run_id: str):
+        if self._store is None:
+            return None
+        load_events = getattr(self._store, "load_lifecycle_events", None)
+        if not callable(load_events):
+            return None
+        events = load_events(run_id)
+        if not events:
+            return None
+        from .lifecycle import RunLifecycle
+        return RunLifecycle.from_events(events)
 
     @staticmethod
     def _finish_lifecycle(lifecycle: Any, status: RunStatus, *, reason_code: str | None) -> None:

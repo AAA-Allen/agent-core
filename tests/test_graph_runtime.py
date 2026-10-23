@@ -353,6 +353,27 @@ class GraphRuntimeTests(unittest.TestCase):
             worker.join(1)
             self.assertFalse(worker.is_alive())
 
+    def test_resume_preserves_persisted_lifecycle_history(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from agent_core import Checkpoint, RunStore
+
+        graph = (
+            Graph()
+            .add_node("first", lambda ctx: NodeResult.success({"a": 1}, route="next"))
+            .add_node("second", lambda ctx: NodeResult.success({"b": 2}))
+            .set_entry("first").add_edge("first", "second", when="next").compile()
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            store = RunStore(Path(directory))
+            Runtime(store=store, max_steps=1).run(graph, {}, run_id="history-resume")
+            checkpoint = Checkpoint("history-resume", "graph", "second", {"a": 1}, 1, 1)
+            result = Runtime(store=store, max_steps=2).resume(graph, checkpoint)
+            self.assertEqual(
+                [event.event_type for event in result.lifecycle_events],
+                ["run.created", "run.running", "run.failed", "run.resumed", "run.completed"],
+            )
+
     def test_external_thread_can_request_cooperative_cancellation(self) -> None:
         import threading
 
