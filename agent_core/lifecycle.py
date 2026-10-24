@@ -145,6 +145,8 @@ class RunLifecycle:
         _validate_run_id(run_id)
         event_ids: set[str] = set()
         for expected_sequence, event in enumerate(events, start=1):
+            if not isinstance(event, LifecycleEvent):
+                raise TypeError("lifecycle event must be a LifecycleEvent")
             if event.run_id != run_id or event.sequence != expected_sequence:
                 raise ValueError("invalid lifecycle event sequence")
             if not isinstance(event.event_id, str) or not event.event_id.strip() \
@@ -156,6 +158,14 @@ class RunLifecycle:
                 datetime.fromisoformat(event.occurred_at)
             except (TypeError, ValueError) as exc:
                 raise ValueError("lifecycle event occurred_at must be ISO-8601") from exc
+            if event.from_status is not None and not isinstance(event.from_status, LifecycleStatus):
+                raise ValueError("lifecycle event from_status is invalid")
+            if not isinstance(event.to_status, LifecycleStatus):
+                raise ValueError("lifecycle event to_status is invalid")
+            if event.reason_code is not None and (
+                not isinstance(event.reason_code, str) or not event.reason_code.strip()
+            ):
+                raise ValueError("lifecycle event reason_code must be nonempty")
             event_ids.add(event.event_id)
         first = events[0]
         if first.event_type != "run.created" or first.from_status is not None \

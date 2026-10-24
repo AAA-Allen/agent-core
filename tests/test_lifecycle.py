@@ -109,6 +109,28 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "occurred_at must be ISO-8601"):
             RunLifecycle.from_events(events)
 
+    def test_rehydration_rejects_invalid_event_reason_code(self) -> None:
+        from agent_core import LifecycleEvent
+        from datetime import datetime, timezone
+
+        events = (
+            LifecycleEvent("run-1", 1, "e1", "run.created", None,
+                           LifecycleStatus.PENDING, datetime.now(timezone.utc).isoformat(), " "),
+        )
+        with self.assertRaisesRegex(ValueError, "reason_code must be nonempty"):
+            RunLifecycle.from_events(events)
+
+    def test_rehydration_rejects_string_status_values(self) -> None:
+        from agent_core import LifecycleEvent
+        from datetime import datetime, timezone
+
+        events = (
+            LifecycleEvent("run-1", 1, "e1", "run.created", None,
+                           "PENDING", datetime.now(timezone.utc).isoformat()),
+        )
+        with self.assertRaisesRegex(ValueError, "to_status is invalid"):
+            RunLifecycle.from_events(events)
+
     def test_explicit_recovery_records_running_recovery(self) -> None:
         lifecycle = RunLifecycle("run-1")
         lifecycle.transition(LifecycleStatus.RUNNING)
