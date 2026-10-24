@@ -143,9 +143,14 @@ class RunLifecycle:
             raise ValueError("lifecycle event sequence cannot be empty")
         run_id = events[0].run_id
         _validate_run_id(run_id)
+        event_ids: set[str] = set()
         for expected_sequence, event in enumerate(events, start=1):
             if event.run_id != run_id or event.sequence != expected_sequence:
                 raise ValueError("invalid lifecycle event sequence")
+            if not isinstance(event.event_id, str) or not event.event_id.strip() \
+                    or event.event_id in event_ids:
+                raise ValueError("lifecycle event ids must be unique")
+            event_ids.add(event.event_id)
         first = events[0]
         if first.event_type != "run.created" or first.from_status is not None \
                 or first.to_status is not LifecycleStatus.PENDING:

@@ -57,6 +57,7 @@
 - RunStore 写入时校验生命周期历史与 RunResult 状态一致，拒绝生成不可读记录。
 - RunStore Trace 校验允许运行级 `run.*` 事件使用空 step，同时约束节点事件的 step 和耗时。
 - RunStore Trace 校验 metadata 为对象，state_version 为非负整数。
+- 生命周期事件重放校验 event_id 非空且全序列唯一。
 
 ## Acceptance
 
@@ -81,4 +82,5 @@
 - [x] RunStore 写入生命周期历史与结果状态一致性已覆盖。
 - [x] RunStore Trace 运行级事件与节点事件边界校验已覆盖。
 - [x] RunStore Trace metadata 和 state_version 校验已覆盖。
+- [x] 生命周期事件 event_id 唯一性校验已覆盖。
 - 当前工作区已提交；未跟踪的 `agent_runtime_document_pack/` 按约定保持不变。
