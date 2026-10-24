@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import threading
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 from uuid import uuid4
@@ -83,40 +84,21 @@ class InMemoryCheckpointStore:
 
     def __init__(self) -> None:
         self._records: dict[str, Checkpoint] = {}
+        self._lock = threading.RLock()
 
     def save(self, checkpoint: Checkpoint) -> None:
-        if not isinstance(checkpoint, Checkpoint):
-            raise TypeError("checkpoint must be a Checkpoint")
-        existing = self._records.get(checkpoint.run_id)
-        if existing is not None:
-            if checkpoint.graph_id != existing.graph_id:
-                raise ValueError("checkpoint graph_id cannot change")
-            if checkpoint.state_version < existing.state_version:
-                raise ValueError("checkpoint state_version cannot move backwards")
-            if checkpoint.step_count < existing.step_count:
-                raise ValueError("checkpoint step_count cannot move backwards")
-            if (
-                checkpoint.state_version == existing.state_version
-                and checkpoint.step_count == existing.step_count
-                and checkpoint != existing
-            ):
-                raise ValueError("checkpoint cannot change without progress")
-        self._records[checkpoint.run_id] = Checkpoint(
-            checkpoint.run_id, checkpoint.graph_id, checkpoint.next_node,
-            checkpoint.state, checkpoint.state_version, checkpoint.step_count,
-            checkpoint.schema_version,
-        )
+        with self._lock:
+            if not isinstance(checkpoint, Checkpoint):
+                raise TypeError("checkpoint must be a Checkpoint")
+            existing = self._records.get(checkpoint.run_id)
+            _validate_checkpoint_progress(existing, checkpoint)
+            self._records[checkpoint.run_id] = _copy_checkpoint(checkpoint)
 
     def load(self, run_id: str) -> Checkpoint | None:
         _validate_run_id(run_id)
-        checkpoint = self._records.get(run_id)
-        if checkpoint is None:
-            return None
-        return Checkpoint(
-            checkpoint.run_id, checkpoint.graph_id, checkpoint.next_node,
-            checkpoint.state, checkpoint.state_version, checkpoint.step_count,
-            checkpoint.schema_version,
-        )
+        with self._lock:
+            checkpoint = self._records.get(run_id)
+            return None if checkpoint is None else _copy_checkpoint(checkpoint)
 
     def load_for(self, run_id: str, graph_id: str) -> Checkpoint | None:
         if not isinstance(graph_id, str) or not graph_id.strip():
@@ -130,7 +112,8 @@ class InMemoryCheckpointStore:
 
     def delete(self, run_id: str) -> None:
         _validate_run_id(run_id)
-        self._records.pop(run_id, None)
+        with self._lock:
+            self._records.pop(run_id, None)
 
 
 class FileCheckpointStore:
@@ -138,43 +121,33 @@ class FileCheckpointStore:
 
     def __init__(self, directory: str | Path) -> None:
         self._directory = Path(directory)
+        self._lock = threading.RLock()
 
     @property
     def directory(self) -> Path:
         return self._directory
 
     def save(self, checkpoint: Checkpoint) -> None:
-        if not isinstance(checkpoint, Checkpoint):
-            raise TypeError("checkpoint must be a Checkpoint")
-        existing = self.load(checkpoint.run_id)
-        if existing is not None:
-            if checkpoint.graph_id != existing.graph_id:
-                raise ValueError("checkpoint graph_id cannot change")
-            if checkpoint.state_version < existing.state_version:
-                raise ValueError("checkpoint state_version cannot move backwards")
-            if checkpoint.step_count < existing.step_count:
-                raise ValueError("checkpoint step_count cannot move backwards")
-            if (
-                checkpoint.state_version == existing.state_version
-                and checkpoint.step_count == existing.step_count
-                and checkpoint != existing
-            ):
-                raise ValueError("checkpoint cannot change without progress")
-        self._directory.mkdir(parents=True, exist_ok=True)
-        target = self._directory / f"{checkpoint.run_id}.json"
-        temporary = self._directory / f".{checkpoint.run_id}.{uuid4().hex}.json.tmp"
-        try:
-            temporary.write_text(
-                json.dumps(checkpoint.to_dict(), ensure_ascii=False, indent=2, allow_nan=False),
-                encoding="utf-8",
-            )
-            temporary.replace(target)
-        except Exception:
+        with self._lock:
+            if not isinstance(checkpoint, Checkpoint):
+                raise TypeError("checkpoint must be a Checkpoint")
+            existing = self.load(checkpoint.run_id)
+            _validate_checkpoint_progress(existing, checkpoint)
+            self._directory.mkdir(parents=True, exist_ok=True)
+            target = self._directory / f"{checkpoint.run_id}.json"
+            temporary = self._directory / f".{checkpoint.run_id}.{uuid4().hex}.json.tmp"
             try:
-                temporary.unlink()
-            except OSError:
-                pass
-            raise
+                temporary.write_text(
+                    json.dumps(checkpoint.to_dict(), ensure_ascii=False, indent=2, allow_nan=False),
+                    encoding="utf-8",
+                )
+                temporary.replace(target)
+            except Exception:
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
+                raise
 
     def load(self, run_id: str) -> Checkpoint | None:
         _validate_run_id(run_id)
@@ -200,7 +173,33 @@ class FileCheckpointStore:
     def delete(self, run_id: str) -> None:
         _validate_run_id(run_id)
         target = self._directory / f"{run_id}.json"
-        try:
-            target.unlink()
-        except FileNotFoundError:
-            pass
+        with self._lock:
+            try:
+                target.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _copy_checkpoint(checkpoint: Checkpoint) -> Checkpoint:
+    return Checkpoint(
+        checkpoint.run_id, checkpoint.graph_id, checkpoint.next_node,
+        checkpoint.state, checkpoint.state_version, checkpoint.step_count,
+        checkpoint.schema_version,
+    )
+
+
+def _validate_checkpoint_progress(existing: Checkpoint | None, checkpoint: Checkpoint) -> None:
+    if existing is None:
+        return
+    if checkpoint.graph_id != existing.graph_id:
+        raise ValueError("checkpoint graph_id cannot change")
+    if checkpoint.state_version < existing.state_version:
+        raise ValueError("checkpoint state_version cannot move backwards")
+    if checkpoint.step_count < existing.step_count:
+        raise ValueError("checkpoint step_count cannot move backwards")
+    if (
+        checkpoint.state_version == existing.state_version
+        and checkpoint.step_count == existing.step_count
+        and checkpoint != existing
+    ):
+        raise ValueError("checkpoint cannot change without progress")

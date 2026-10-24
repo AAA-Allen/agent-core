@@ -107,6 +107,28 @@ class CheckpointTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid checkpoint"):
                 store.load("broken")
 
+    def test_memory_store_serializes_concurrent_progress(self) -> None:
+        import threading
+
+        store = InMemoryCheckpointStore()
+        errors: list[Exception] = []
+
+        checkpoint = Checkpoint("concurrent", "graph", "next", {"step": 1}, 1, 1)
+
+        def save() -> None:
+            try:
+                store.save(checkpoint)
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=save) for _ in range(4)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(1)
+        self.assertEqual(errors, [])
+        self.assertEqual(store.load("concurrent").step_count, 1)
+
     def test_file_store_cleans_temporary_file_when_replace_fails(self) -> None:
         import tempfile
         from pathlib import Path
