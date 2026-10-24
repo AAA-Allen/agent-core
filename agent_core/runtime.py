@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from time import monotonic
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 from uuid import uuid4
 
@@ -71,6 +72,14 @@ class RunContext:
     run_id: str
     _input: dict[str, Any] = field(repr=False)
     _outputs: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
+    _output_store: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        input_snapshot = dict(self._input)
+        output_snapshot = dict(self._outputs)
+        self._output_store = output_snapshot
+        self._input = MappingProxyType(input_snapshot)
+        self._outputs = MappingProxyType(output_snapshot)
 
     @property
     def input(self) -> Mapping[str, Any]:
@@ -78,10 +87,13 @@ class RunContext:
 
     @property
     def outputs(self) -> Mapping[str, Mapping[str, Any]]:
-        return _json_snapshot(self._outputs)
+        return _json_snapshot(self._output_store)
 
     def output_of(self, step_name: str) -> Mapping[str, Any]:
-        return _json_snapshot(self._outputs[step_name])
+        return _json_snapshot(self._output_store[step_name])
+
+    def _commit_output(self, step_name: str, output: Mapping[str, Any]) -> None:
+        self._output_store[step_name] = _json_snapshot(output)
 
 
 @dataclass(frozen=True)
@@ -164,7 +176,7 @@ class WorkflowRunner:
                 if not isinstance(outcome, StepOutcome):
                     raise TypeError("step must return StepOutcome")
                 if outcome.status is StepStatus.COMPLETED:
-                    context._outputs[step.name] = _json_snapshot(outcome.output)
+                    context._commit_output(step.name, outcome.output)
                 events.append(TraceEvent(
                     context.run_id, step.name, outcome.status.value, started_at,
                     round((monotonic() - started) * 1000, 3), outcome.reason_code,

@@ -63,10 +63,17 @@ class RunContextSnapshotTests(unittest.TestCase):
 
     def test_output_of_is_a_detached_snapshot(self) -> None:
         context = RunContext(run_id="r1", _input={})
-        context._outputs["a"] = {"value": 1}
+        context._commit_output("a", {"value": 1})
         snapshot = context.output_of("a")
         snapshot["value"] = 999
         self.assertEqual(context.output_of("a")["value"], 1)
+
+    def test_private_context_snapshots_cannot_be_mutated(self) -> None:
+        context = RunContext(run_id="r1", _input={"nested": {"value": 1}})
+        with self.assertRaises(TypeError):
+            context._input["new"] = 2
+        with self.assertRaises(TypeError):
+            context._outputs["new"] = {"value": 2}
 
     def test_non_finite_input_is_rejected_on_read(self) -> None:
         context = RunContext(run_id="r1", _input={"x": float("nan")})
