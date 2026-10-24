@@ -148,3 +148,28 @@
 - `RunStore` 默认目录 `outputs/server_runs`(已 gitignore);服务器默认绑定 127.0.0.1,未做身份鉴权,仅限本机使用。
 - 前端历史存于浏览器 localStorage(最近 30 条);服务端运行记录以 `RunStore` 落盘为准。
 - `agent_runtime_document_pack/` 按约定保持未跟踪。
+
+## Session 2026-10-25(续):声明式 Agent 装配与 SSE 实时流
+
+主线:从"能用"到"平台化、实时化"——Agent 不必写 Python 即可装配,运行过程毫秒级可见。
+
+### 已完成
+
+- [x] `agent_core/nodes.py` 确定性节点工厂库:`validate_input` / `split_steps` / `template` / `tool` / `route_by_value`;参数在装配期校验,运行期数据问题 fail-closed(BLOCKED/FAILED 带原因码);`template` 只允许顶层状态键占位,拒绝属性访问路径。
+- [x] `build_agent_from_config()` + 服务端 `--config`:启动期从 JSON(单配置或 `agents` 列表)装载 Agent,共享 Runtime 与 RunStore;`register_node_factory()` 供应用扩充节点类型,重复注册拒绝。
+- [x] `examples/support_agent.json`:完全由节点库装配的示例 Agent,作为契约测试用例常驻测试。
+- [x] SSE 端点 `GET /api/runs/{id}/events/stream`:回放已持久化事件 → 增量推送 → `done` 帧携带终态;心跳注释保活,断连与超时有界(15 分钟上限),未知运行返回 JSON 404。
+- [x] 前端 `watchLiveTask`:EventSource 消费 lifecycle 帧 + 去重,`done` 触发结果拉取;2 秒状态轮询看门狗兜底断连,保留离线演示模式。
+- [x] 测试:节点库 12 项(含示例文件端到端、自定义工厂注册)、服务端 17 项(含 SSE 推流、SSE 404、配置装载与非法配置拒绝)。
+- [x] 端到端:curl 验证配置 Agent 装载与 SSE 回放;内置浏览器验证 EventSource 全流程。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 217 passed(170 基线 + Agent 外壳 18 + HTTP 服务 17 + 节点库 12)。
+
+### Known Limits
+
+- 节点库刻意不含表达式求值、网络调用或代码加载;动态行为必须经 `tool` 节点与注册工具进入。
+- SSE 流按 150ms 轮询 Runtime 生命周期实现,不改变"事件在转换时刻落盘"的事实;跨进程推送仍以文件为准。
+- 模板占位符是安全子集(无格式规格、无属性访问),复杂渲染应交给工具节点。
+- 前端 localStorage 历史与 SSE 均假设单用户本机场景。

@@ -162,6 +162,24 @@ result = agent.run({"text": "hello"})
 
 Agent 节点收到的 `AgentNodeContext` 还包含 `model`、`tools`、`memory` 和 `cancel_requested`。`InMemoryMemory` 适合开发和测试；生产环境可实现 `MemoryStore` 接入自己的存储。`AgentResult.run` 保留底层 `RunResult`，因此不会丢失节点 Trace 或生命周期信息。`agent.describe()` 返回编译后的图拓扑（入口、节点、边），可用于 UI 展示和自省。
 
+## 声明式 Agent 装配
+
+`agent_core/nodes.py` 提供确定性节点工厂库，让 Agent 可以用 JSON 配置组装而不必写 Python:
+
+| 节点类型 | 职责 |
+|---|---|
+| `validate_input` | 要求某输入字段为非空字符串并修剪，缺失即 BLOCKED（原因码可配） |
+| `split_steps` | 按句子边界把文本字段拆解为有序计划条目 |
+| `template` | 用 `{state_key}` 占位符渲染字符串到状态；只允许顶层键引用，缺失即 FAILED |
+| `tool` | 调用注册工具，参数可为字面量或状态模板；BLOCKED/FAILED 原因码原样透传 |
+| `route_by_value` | 按状态值选择出边路由，可配默认路由，无法解析时 BLOCKED |
+
+```bash
+python -m agent_core.server --config examples/support_agent.json
+```
+
+配置文件可以是单个 Agent 配置或 `{"agents": [...]}`；装配时校验（未知节点类型、重复 id、非法参数都会在启动期报错），应用可用 `register_node_factory()` 扩充节点类型。`examples/support_agent.json` 是完整示例。
+
 ## HTTP 服务与工作台
 
 `agent_core/server.py` 用纯标准库把运行时暴露为 HTTP API，并托管 `frontend/` 工作台：
@@ -183,6 +201,7 @@ python -m agent_core.server --host 127.0.0.1 --port 8000 --store-dir outputs/ser
 | `GET` | `/api/runs/{id}` | 终态结果（含 Trace 与生命周期事件） |
 | `GET` | `/api/runs/{id}/status` | 当前生命周期状态（含异步运行的 `PENDING`/`RUNNING`） |
 | `GET` | `/api/runs/{id}/events` | 生命周期事件序列 |
+| `GET` | `/api/runs/{id}/events/stream` | SSE 实时推送生命周期事件，终态以 `done` 帧收尾 |
 | `POST` | `/api/runs/{id}/cancel` | 发出协作式取消请求，返回是否受理 |
 
 错误统一为 `{"error": {"code", "message"}}`：非法 JSON/输入返回 `400`，未知 Agent 或运行返回 `404`，重复占用 `run_id` 返回 `409`，路径穿越与不支持类型拒绝访问。静态文件只从 `frontend/` 目录解析。
