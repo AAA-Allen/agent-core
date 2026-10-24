@@ -9,3 +9,15 @@ body:not(.live) .status-dot{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158
 .detail-json{margin-top:12px;padding:12px 14px;border-radius:10px;background:rgba(15,23,42,.05);border:1px solid rgba(15,23,42,.06);font-family:"DM Mono",monospace;font-size:12px;line-height:1.65;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 .demo-badge{white-space:nowrap}
 #demoBadgeText{display:inline;width:auto;height:auto;margin:0;background:none;border:none;padding:0}
+.detail-table{width:100%;margin-top:12px;border-collapse:collapse;font-size:12px}
+.detail-table th{text-align:left;font-weight:600;color:#6b7280;padding:6px 8px;border-bottom:1px solid rgba(15,23,42,.08)}
+.detail-table td{padding:6px 8px;border-bottom:1px solid rgba(15,23,42,.05);font-family:"DM Mono",monospace;font-size:11px}
+.history-item.server-run{width:100%;text-align:left;margin-bottom:8px}
+.history-heading.server-heading{margin-top:14px}
+.history-heading.server-heading span{font:500 11px/1 "DM Mono",monospace;color:#94a3b8}
+.topology-card{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-radius:10px;border:1px solid rgba(15,23,42,.07);background:rgba(248,250,252,.8);margin-bottom:8px}
+.topology-card strong{font:700 13px/1.4 "Noto Sans SC",sans-serif}
+.topology-card span{font:400 12px/1.5 "Noto Sans SC",sans-serif;color:#64748b}
+.topology-card code{font:500 11px/1.6 "DM Mono",monospace;color:#475569;word-break:break-all}
+.topology-edges{color:#94a3b8 !important;font-size:11px !important}
+.topology-count{font:500 11px/1 "DM Mono",monospace;color:#94a3b8}

@@ -319,22 +319,31 @@ function submitTask(raw) {
   if (task.mode === 'live') runLiveTask(task); else runDemoTask(task);
 }
 
+const serverRunCache = new Map();
+
+function runInspectorBody(run) {
+  const nodes = run.trace.filter((event) => event.event_type === 'node.started').map((event) => event.node_id).join(' → ') || '（无节点执行）';
+  const traceRows = run.trace.map((event) => `<tr><td>${escapeHtml(event.sequence)}</td><td>${escapeHtml(event.event_type)}</td><td>${escapeHtml(event.node_id || '—')}</td><td>${escapeHtml(event.status)}</td><td>${escapeHtml(event.duration_ms != null ? `${event.duration_ms} ms` : '—')}</td></tr>`).join('');
+  const lifecycleRows = (run.lifecycle_events || []).map((event) => `<tr><td>${escapeHtml(event.sequence)}</td><td>${escapeHtml(event.event_type)}</td><td>${escapeHtml(event.from_status || '—')} → ${escapeHtml(event.to_status)}</td><td>${escapeHtml(event.reason_code || '—')}</td></tr>`).join('');
+  return `<div class="detail-grid">
+    <div class="detail-item"><span>运行 ID</span><strong>${escapeHtml(run.run_id)}</strong></div>
+    <div class="detail-item"><span>状态</span><strong>${escapeHtml(run.status)}</strong></div>
+    <div class="detail-item"><span>原因码</span><strong>${escapeHtml(run.reason_code || '—')}</strong></div>
+    <div class="detail-item"><span>结束时间</span><strong>${escapeHtml(run.stopped_at || '—')}</strong></div>
+    <div class="detail-item"><span>模拟标记</span><strong>${run.simulated ? 'simulated' : '真实执行'}</strong></div>
+    <div class="detail-item"><span>Trace 事件</span><strong>${run.trace.length} 条</strong></div>
+  </div>
+  <div class="detail-output"><strong>执行路径</strong><br />${escapeHtml(nodes)}</div>
+  ${traceRows ? `<table class="detail-table"><thead><tr><th>#</th><th>事件</th><th>节点</th><th>状态</th><th>耗时</th></tr></thead><tbody>${traceRows}</tbody></table>` : ''}
+  ${lifecycleRows ? `<table class="detail-table"><thead><tr><th>#</th><th>生命周期</th><th>状态迁移</th><th>原因码</th></tr></thead><tbody>${lifecycleRows}</tbody></table>` : ''}
+  <pre class="detail-json">${escapeHtml(JSON.stringify(run.state, null, 2))}</pre>`;
+}
+
 function openDetail() {
   const task = state.tasks.find((item) => item.id === state.activeId); if (!task) return;
   let body;
   if (task.mode === 'live' && task.run) {
-    const run = task.run;
-    const nodes = run.trace.filter((event) => event.event_type === 'node.started').map((event) => event.node_id).join(' → ') || '（无节点执行）';
-    body = `<div class="detail-grid">
-      <div class="detail-item"><span>运行 ID</span><strong>${escapeHtml(run.run_id)}</strong></div>
-      <div class="detail-item"><span>状态</span><strong>${escapeHtml(run.status)}</strong></div>
-      <div class="detail-item"><span>原因码</span><strong>${escapeHtml(run.reason_code || '—')}</strong></div>
-      <div class="detail-item"><span>结束时间</span><strong>${escapeHtml(run.stopped_at || '—')}</strong></div>
-      <div class="detail-item"><span>模拟标记</span><strong>${run.simulated ? 'simulated' : '真实执行'}</strong></div>
-      <div class="detail-item"><span>Trace 事件</span><strong>${run.trace.length} 条</strong></div>
-    </div>
-    <div class="detail-output"><strong>执行路径</strong><br />${escapeHtml(nodes)}</div>
-    <pre class="detail-json">${escapeHtml(JSON.stringify(run.state, null, 2))}</pre>`;
+    body = runInspectorBody(task.run);
   } else {
     body = `<div class="detail-grid">
       <div class="detail-item"><span>运行 ID</span><strong>${escapeHtml(task.id)}</strong></div>
@@ -349,20 +358,59 @@ function openDetail() {
   $('detailModal').showModal(); refreshIcons();
 }
 
+function openServerRunDetail(runId) {
+  const run = serverRunCache.get(runId); if (!run) return;
+  $('modalTitle').textContent = `服务端运行 ${runId}`;
+  $('modalBody').innerHTML = runInspectorBody(run);
+  $('detailModal').showModal(); refreshIcons();
+}
+
 async function renderLogsView() {
   $('executionTitle').textContent = '运行日志';
-  let serverLine = '';
+  const rows = [];
   if (state.live) {
     try {
       const payload = await apiFetch('/api/runs', {}, 3000);
-      serverLine = `<div class="timeline-step done"><span class="step-marker">${icon('server')}</span><span class="step-rail"></span><div><div class="step-name">Runtime 服务</div><div class="step-desc">已持久化 ${payload.runs.length} 条运行记录 · 活跃 ${payload.active.length} 条</div></div><span class="step-time">${nowTime()}</span></div>`;
-    } catch { serverLine = ''; }
+      const recent = payload.runs.slice(-12).reverse();
+      const details = await Promise.all(recent.map(async (runId) => {
+        try {
+          const { run } = await apiFetch(`/api/runs/${runId}`, {}, 3000);
+          serverRunCache.set(runId, run);
+          return run;
+        } catch { return null; }
+      }));
+      const serverRows = details.filter(Boolean).map((run) => `<button class="history-item server-run" data-run-id="${escapeHtml(run.run_id)}"><span class="history-icon">${icon(run.status === 'COMPLETED' ? 'check' : 'triangle-alert')}</span><span class="history-content"><span class="history-name">${escapeHtml((run.state && run.state.summary) || run.run_id)}</span><span class="history-meta"><span class="mini-status ${run.status === 'COMPLETED' ? 'completed' : 'failed'}"></span>${escapeHtml(run.status)} · ${escapeHtml(clockTime(run.stopped_at))}</span></span></button>`);
+      rows.push(`<div class="history-heading server-heading"><h2>服务端运行记录</h2><span>${payload.runs.length} 条 · 活跃 ${payload.active.length}</span></div>`);
+      if (serverRows.length) rows.push(serverRows.join(''));
+      else rows.push('<div class="timeline-empty">服务端暂无持久化运行</div>');
+    } catch { rows.push('<div class="timeline-empty">无法读取服务端运行记录</div>'); }
   }
-  const rows = state.tasks.map((task) => `<div class="timeline-step ${task.status === 'failed' ? 'failed' : 'done'}"><span class="step-marker">${icon(task.status === 'failed' ? 'triangle-alert' : 'check')}</span><span class="step-rail"></span><div><div class="step-name">${escapeHtml(task.title)}</div><div class="step-desc">${escapeHtml(`${task.mode === 'live' ? 'Runtime API' : '本地演示'} · ${statusLabel(task)}`)}</div></div><span class="step-time">${escapeHtml(task.time)}</span></div>`).join('');
-  $('timeline').innerHTML = `<div class="timeline-list">${serverLine}${rows || '<div class="timeline-empty">暂无运行日志</div>'}</div>`;
+  rows.push('<div class="history-heading server-heading"><h2>本页任务</h2></div>');
+  rows.push(state.tasks.map((task) => `<div class="timeline-step ${task.status === 'failed' ? 'failed' : 'done'}"><span class="step-marker">${icon(task.status === 'failed' ? 'triangle-alert' : 'check')}</span><span class="step-rail"></span><div><div class="step-name">${escapeHtml(task.title)}</div><div class="step-desc">${escapeHtml(`${task.mode === 'live' ? 'Runtime API' : '本地演示'} · ${statusLabel(task)}`)}</div></div><span class="step-time">${escapeHtml(task.time)}</span></div>`).join('') || '<div class="timeline-empty">暂无本页任务</div>');
+  $('timeline').innerHTML = `<div class="timeline-list">${rows.join('')}</div>`;
+  $('timeline').querySelectorAll('[data-run-id]').forEach((item) => item.addEventListener('click', () => openServerRunDetail(item.dataset.runId)));
   $('resultPanel').classList.add('hidden');
   updateCancelButton(null);
   refreshIcons();
+}
+
+async function renderAgentTopology() {
+  const container = $('agentTopology');
+  if (!container) return;
+  if (!state.live) { container.innerHTML = '<div class="settings-note"><span>离线模式下无法读取 Agent 拓扑。</span></div>'; return; }
+  try {
+    const payload = await apiFetch('/api/agents', {}, 3000);
+    const count = $('topologyCount');
+    if (count) count.textContent = `${payload.agents.length} 个已注册`;
+    container.innerHTML = payload.agents.map((agent) => {
+      const graph = agent.graph || { nodes: [], edges: [], entry: '?' };
+      const flow = `${escapeHtml(graph.entry)} → ${escapeHtml(graph.nodes.filter((n) => n !== graph.entry).join(' → ') || '—')}`;
+      const edges = graph.edges.map((edge) => `${escapeHtml(edge.source)}→${escapeHtml(edge.target)}${edge.when ? ` [${escapeHtml(edge.when)}]` : ''}`).join('，');
+      return `<div class="topology-card"><strong>${escapeHtml(agent.name)}</strong><span>${escapeHtml(agent.description || agent.instructions || '')}</span><code>${flow}</code><span class="topology-edges">${edges || '无边'}</span></div>`;
+    }).join('');
+  } catch {
+    container.innerHTML = '<div class="settings-note"><span>读取 Agent 拓扑失败。</span></div>';
+  }
 }
 
 function resetWorkspace() {
@@ -380,7 +428,7 @@ function switchView(view) {
   state.view = view;
   document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === view));
   if (view === 'logs') { renderLogsView(); }
-  else if (view === 'settings') { $('settingsModal').showModal(); switchView('tasks'); }
+  else if (view === 'settings') { $('settingsModal').showModal(); renderAgentTopology(); switchView('tasks'); }
   else if (state.activeId) selectTask(state.activeId);
 }
 
