@@ -10,6 +10,10 @@ from .results import NodeResult, NodeStatus
 from .runtime import Runtime
 from .checkpoint import Checkpoint, CheckpointStore, FileCheckpointStore, InMemoryCheckpointStore
 from .lifecycle import LifecycleEvent, LifecycleStatus, RunLifecycle
+from .agent import (
+    Agent, AgentBuilder, AgentNode, AgentNodeContext, AgentResult, AgentSpec,
+    InMemoryMemory, MemoryStore, ModelAdapter,
+)
 
 __all__ = [
     "RunContext", "RunResult", "RunStatus", "Step", "StepOutcome", "StepStatus",
@@ -19,5 +23,7 @@ __all__ = [
     "NodeResult", "NodeStatus",
     "Checkpoint", "CheckpointStore", "InMemoryCheckpointStore", "FileCheckpointStore",
     "LifecycleEvent", "LifecycleStatus", "RunLifecycle",
+    "Agent", "AgentBuilder", "AgentNode", "AgentNodeContext", "AgentResult", "AgentSpec",
+    "InMemoryMemory", "MemoryStore", "ModelAdapter",
     "__version__",
 ]

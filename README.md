@@ -140,6 +140,28 @@ assert result.status.value == "COMPLETED"
 
 当前定位：可复用的基础运行时内核，不是完整通用 Agent 平台。
 
+## Agent 框架外壳
+
+如果应用需要把模型、工具、记忆和工作流组合成一个可复用的 Agent，可以使用上层外壳。外壳不内置模型调用或规划器；这些能力通过 `ModelAdapter` 和节点函数注入，并继续使用同一套图执行、Trace、生命周期和持久化语义。
+
+```python
+from agent_core import AgentBuilder, NodeResult
+
+agent = (
+    AgentBuilder("text-agent", instructions="处理用户文本")
+    .add_node("prepare", lambda ctx: NodeResult.success({"text": ctx.input["text"]}))
+    .add_node("finish", lambda ctx: NodeResult.success({"done": True}))
+    .set_entry("prepare")
+    .add_edge("prepare", "finish")
+    .build()
+)
+result = agent.run({"text": "hello"})
+# result.status == RunStatus.COMPLETED
+# result.state["done"] is True
+```
+
+Agent 节点收到的 `AgentNodeContext` 还包含 `model`、`tools`、`memory` 和 `cancel_requested`。`InMemoryMemory` 适合开发和测试；生产环境可实现 `MemoryStore` 接入自己的存储。`AgentResult.run` 保留底层 `RunResult`，因此不会丢失节点 Trace 或生命周期信息。
+
 ## 许可
 
 待定（对外发布前必须确定）。未确定前默认保留所有权利。
