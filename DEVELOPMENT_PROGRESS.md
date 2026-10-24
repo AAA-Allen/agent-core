@@ -160,6 +160,7 @@
 - [x] `examples/support_agent.json`:完全由节点库装配的示例 Agent,作为契约测试用例常驻测试。
 - [x] SSE 端点 `GET /api/runs/{id}/events/stream`:回放已持久化事件 → 增量推送 → `done` 帧携带终态;心跳注释保活,断连与超时有界(15 分钟上限),未知运行返回 JSON 404。
 - [x] 前端 `watchLiveTask`:EventSource 消费 lifecycle 帧 + 去重,`done` 触发结果拉取;2 秒状态轮询看门狗兜底断连,保留离线演示模式。
+- [x] 工作台运行检查器:日志视图读取服务端持久化运行(最近 12 条,可点击),详情弹窗展示完整 Trace 表格、生命周期迁移表格与最终状态 JSON;设置页展示各 Agent 图拓扑(来自 `describe()`)。
 - [x] 测试:节点库 12 项(含示例文件端到端、自定义工厂注册)、服务端 17 项(含 SSE 推流、SSE 404、配置装载与非法配置拒绝)。
 - [x] 端到端:curl 验证配置 Agent 装载与 SSE 回放;内置浏览器验证 EventSource 全流程。
 
