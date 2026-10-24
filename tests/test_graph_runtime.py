@@ -229,6 +229,22 @@ class GraphRuntimeTests(unittest.TestCase):
         )
         self.assertIsNone(runtime.get_status("unknown-run"))
 
+    def test_node_context_private_snapshots_are_recursively_read_only(self) -> None:
+        from agent_core import NodeContext
+
+        context = NodeContext(
+            run_id="context-run", node_id="node", execution_id="execution",
+            state_version=0, _input={"nested": {"value": 1}},
+            _state={"items": [{"value": 2}]},
+        )
+        with self.assertRaises(TypeError):
+            context._input["nested"]["value"] = 3
+        with self.assertRaises(TypeError):
+            context._state["items"][0]["value"] = 4
+        snapshot = context.state
+        snapshot["items"][0]["value"] = 9
+        self.assertEqual(context.state["items"][0]["value"], 2)
+
     def test_cancel_request_stops_before_next_node(self) -> None:
         calls: list[str] = []
         runtime = Runtime()

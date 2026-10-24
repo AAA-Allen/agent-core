@@ -24,6 +24,10 @@ class NodeContext:
     _state: Mapping[str, Any]
     _cancel_requested: Callable[[], bool] | None = None
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_input", _freeze_value(self._input))
+        object.__setattr__(self, "_state", _freeze_value(self._state))
+
     @property
     def input(self) -> Mapping[str, Any]:
         return _readonly_snapshot(self._input)
@@ -133,5 +137,21 @@ def _validate_identifier(value: str, label: str) -> None:
 
 
 def _readonly_snapshot(value: Mapping[str, Any]) -> Mapping[str, Any]:
-    snapshot = _json_snapshot(value)
+    snapshot = _json_snapshot(_thaw_value(value))
     return MappingProxyType(snapshot)
+
+
+def _freeze_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_value(item) for item in value)
+    return value
+
+
+def _thaw_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_value(item) for item in value]
+    return value
