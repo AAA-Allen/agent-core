@@ -672,6 +672,15 @@ class GraphRuntimeTests(unittest.TestCase):
             self.assertEqual(result.status, expected_status)
             self.assertEqual(result.state, {"input": "original"})
 
+    def test_node_result_detaches_updates_and_output(self) -> None:
+        updates = {"nested": {"value": 1}}
+        output = {"nested": {"value": 2}}
+        result = NodeResult.success(updates, output=output)
+        updates["nested"]["value"] = 9
+        output["nested"]["value"] = 9
+        self.assertEqual(result.updates["nested"]["value"], 1)
+        self.assertEqual(result.output["nested"]["value"], 2)
+
     def test_node_exception_is_failed_without_downstream_execution(self) -> None:
         calls: list[str] = []
 

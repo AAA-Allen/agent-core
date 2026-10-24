@@ -80,6 +80,14 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(result.status.value, "COMPLETED")
         self.assertEqual(result.output, {"text": "hello"})
 
+    def test_tool_result_rejects_invalid_direct_construction(self) -> None:
+        from agent_core import ToolResult, ToolStatus
+
+        with self.assertRaises(TypeError):
+            ToolResult("echo", "COMPLETED")
+        with self.assertRaises(ValueError):
+            ToolResult("echo", ToolStatus.FAILED, reason_code=" ")
+
     def test_capability_check(self) -> None:
         self.registry.register(
             Tool("guarded", lambda args: {"ok": True}, required_capabilities=frozenset({"read"}))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from copy import deepcopy
 from enum import Enum
 from typing import Any, Mapping
 
@@ -50,6 +51,8 @@ class NodeResult:
             raise ValueError("blocked or failed nodes cannot provide a route")
         if not isinstance(self.simulated, bool):
             raise TypeError("simulated must be a bool")
+        object.__setattr__(self, "updates", deepcopy(dict(self.updates)))
+        object.__setattr__(self, "output", deepcopy(self.output))
 
     @classmethod
     def success(

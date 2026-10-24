@@ -42,6 +42,23 @@ class ToolResult:
     reason_code: str | None = None
     error_type: str | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("tool result name must be nonempty")
+        if not isinstance(self.status, ToolStatus):
+            raise TypeError("tool result status must be a ToolStatus")
+        if not isinstance(self.output, Mapping):
+            raise TypeError("tool result output must be a mapping")
+        if self.reason_code is not None and (
+            not isinstance(self.reason_code, str) or not self.reason_code.strip()
+        ):
+            raise ValueError("tool result reason_code must be nonempty")
+        if self.error_type is not None and (
+            not isinstance(self.error_type, str) or not self.error_type.strip()
+        ):
+            raise ValueError("tool result error_type must be nonempty")
+        object.__setattr__(self, "output", _json_snapshot(self.output))
+
 
 class ToolRegistry:
     def __init__(self) -> None:
@@ -59,7 +76,7 @@ class ToolRegistry:
         granted_capabilities: frozenset[str] = frozenset(),
     ) -> ToolResult:
         if not isinstance(name, str) or not name.strip():
-            return ToolResult(str(name), ToolStatus.BLOCKED, reason_code="INVALID_TOOL_NAME")
+            return ToolResult("<invalid>", ToolStatus.BLOCKED, reason_code="INVALID_TOOL_NAME")
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(name, ToolStatus.BLOCKED, reason_code="TOOL_NOT_FOUND")

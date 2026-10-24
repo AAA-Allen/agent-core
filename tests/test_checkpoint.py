@@ -10,6 +10,12 @@ class CheckpointTests(unittest.TestCase):
         state["nested"]["value"] = 9
         self.assertEqual(checkpoint.state["nested"]["value"], 1)
 
+    def test_checkpoint_detaches_nested_lists(self) -> None:
+        state = {"items": [{"value": 1}]}
+        checkpoint = Checkpoint("run-1", "graph-v1", "next", state, 1, 1)
+        state["items"][0]["value"] = 9
+        self.assertEqual(checkpoint.state["items"][0]["value"], 1)
+
     def test_checkpoint_rejects_invalid_counters_and_identity(self) -> None:
         with self.assertRaises(ValueError):
             Checkpoint("../escape", "graph", None, {}, 0, 0)
