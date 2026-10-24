@@ -257,6 +257,24 @@ class GraphRuntimeTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             NodeContext("run", "node", "execution", 0, {}, {}, _cancel_requested=True)
 
+    def test_node_and_edge_objects_validate_direct_construction(self) -> None:
+        from agent_core import Edge, Node
+
+        with self.assertRaises(ValueError):
+            Node("", lambda ctx: NodeResult.success())
+        with self.assertRaises(TypeError):
+            Node("node", None)
+        with self.assertRaises(ValueError):
+            Edge("source", "target", when=" ")
+
+    def test_compiled_graph_keeps_an_immutable_definition_snapshot(self) -> None:
+        graph = Graph().add_node("done", lambda ctx: NodeResult.success()).set_entry("done")
+        compiled = graph.compile()
+        graph.add_node("later", lambda ctx: NodeResult.success())
+        self.assertEqual(set(compiled.nodes), {"done"})
+        with self.assertRaises(TypeError):
+            compiled.nodes["other"] = compiled.nodes["done"]
+
     def test_cancel_request_stops_before_next_node(self) -> None:
         calls: list[str] = []
         runtime = Runtime()

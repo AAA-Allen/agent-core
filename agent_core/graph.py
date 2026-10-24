@@ -56,12 +56,23 @@ class Node:
     node_id: str
     execute: NodeCallable
 
+    def __post_init__(self) -> None:
+        _validate_identifier(self.node_id, "node_id")
+        if not callable(self.execute):
+            raise TypeError("node execute must be callable")
+
 
 @dataclass(frozen=True)
 class Edge:
     source: str
     target: str
     when: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_identifier(self.source, "source")
+        _validate_identifier(self.target, "target")
+        if self.when is not None:
+            _validate_identifier(self.when, "when")
 
 
 @dataclass(frozen=True)
@@ -70,6 +81,15 @@ class CompiledGraph:
     nodes: Mapping[str, Node]
     edges: tuple[Edge, ...]
     entry: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.nodes, Mapping):
+            raise TypeError("nodes must be a mapping")
+        if not isinstance(self.edges, tuple):
+            raise TypeError("edges must be a tuple")
+        _validate_identifier(self.entry, "entry")
+        object.__setattr__(self, "nodes", MappingProxyType(dict(self.nodes)))
+        object.__setattr__(self, "edges", tuple(self.edges))
 
     def outgoing(self, node_id: str) -> tuple[Edge, ...]:
         return tuple(edge for edge in self.edges if edge.source == node_id)

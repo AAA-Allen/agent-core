@@ -4,7 +4,7 @@
 
 ## Baseline
 
-- 实际测试基线：161 passed（生命周期事件字段契约加固后）
+- 实际测试基线：163 passed（Graph 定义对象和编译快照校验加固后）
 - 执行模型：同步、单进程、节点顺序执行
 - 现有 `RunStore`：保存完成后的 `RunResult`
 - 现有 `CheckpointStore`：保存节点边界快照，显式 `Runtime.resume()`
@@ -23,7 +23,7 @@
 
 ## Latest Verification
 
-最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 161 passed。
+最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 163 passed。
 
 ## Known Limits
 
@@ -66,6 +66,7 @@
 - RunResult 校验运行身份、状态、输出映射和模拟标记，并隔离 outputs/state/Trace 容器。
 - TraceEvent 校验运行身份、步骤、时间、耗时、状态版本、原因码和 metadata，并隔离 metadata。
 - 生命周期事件重放校验状态字段为 LifecycleStatus，原因码格式合法。
+- Graph 的 Node/Edge 直接构造校验字段，CompiledGraph 保持节点定义不可变快照。
 - 生命周期事件 occurred_at 必须是可解析的 ISO-8601 时间。
 - 生命周期事件日志写入 schema_version=1，并有落盘形状测试。
 
@@ -101,4 +102,5 @@
 - [x] RunResult 字段校验和输入映射快照隔离已覆盖。
 - [x] TraceEvent 字段边界和 metadata 快照隔离已覆盖。
 - [x] 生命周期事件状态枚举和原因码边界已覆盖。
+- [x] Graph Node/Edge 构造校验和 CompiledGraph 快照隔离已覆盖。
 - 当前工作区已提交；未跟踪的 `agent_runtime_document_pack/` 按约定保持不变。
