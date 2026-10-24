@@ -137,6 +137,26 @@ class WorkflowRunnerExecutionTests(unittest.TestCase):
         self.assertEqual(result.reason_code, "STEP_EXCEPTION")
         self.assertEqual(result.trace[0].error_type, "RuntimeError")
 
+    def test_blocked_step_output_is_not_committed(self) -> None:
+        workflow = WorkflowRunner([
+            Step("stop", lambda ctx: StepOutcome(
+                StepStatus.BLOCKED, {"secret": "uncommitted"}, "STOP"
+            )),
+        ])
+        result = workflow.run({})
+        self.assertEqual(result.status, RunStatus.BLOCKED)
+        self.assertEqual(result.outputs, {})
+
+    def test_failed_step_output_is_not_committed(self) -> None:
+        workflow = WorkflowRunner([
+            Step("stop", lambda ctx: StepOutcome(
+                StepStatus.FAILED, {"secret": "uncommitted"}, "BROKEN"
+            )),
+        ])
+        result = workflow.run({})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.outputs, {})
+
     def test_non_outcome_return_becomes_failed_run(self) -> None:
         workflow = WorkflowRunner([Step("a", lambda context: {"not": "an outcome"})])
         result = workflow.run({"x": 1}, run_id="bad-return")

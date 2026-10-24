@@ -163,7 +163,8 @@ class WorkflowRunner:
                 outcome = step.execute(context)
                 if not isinstance(outcome, StepOutcome):
                     raise TypeError("step must return StepOutcome")
-                context._outputs[step.name] = _json_snapshot(outcome.output)
+                if outcome.status is StepStatus.COMPLETED:
+                    context._outputs[step.name] = _json_snapshot(outcome.output)
                 events.append(TraceEvent(
                     context.run_id, step.name, outcome.status.value, started_at,
                     round((monotonic() - started) * 1000, 3), outcome.reason_code,
