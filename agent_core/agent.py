@@ -220,6 +220,17 @@ class Agent:
         run = self.runtime.run(self.graph, input_data, run_id=run_id)
         return AgentResult(self.spec, run)
 
+    def describe(self) -> dict[str, Any]:
+        """Return the compiled graph topology for introspection and UIs."""
+        return {
+            "entry": self.graph.entry,
+            "nodes": list(self.graph.nodes),
+            "edges": [
+                {"source": edge.source, "target": edge.target, "when": edge.when}
+                for edge in self.graph.edges
+            ],
+        }
+
 
 __all__ = [
     "Agent", "AgentBuilder", "AgentNode", "AgentNodeContext", "AgentResult",

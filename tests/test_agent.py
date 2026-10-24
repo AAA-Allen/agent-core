@@ -52,6 +52,28 @@ class AgentShellTests(unittest.TestCase):
         self.assertEqual(result.trace, result.run.trace)
         self.assertEqual(result.run.lifecycle_events[0].event_type, "run.created")
 
+    def test_agent_describe_exposes_graph_topology(self) -> None:
+        agent = (
+            AgentBuilder("agent")
+            .add_node("first", lambda ctx: NodeResult.success(route="next"))
+            .add_node("second", lambda ctx: NodeResult.success(route="done"))
+            .add_node("third", lambda ctx: NodeResult.success())
+            .set_entry("first")
+            .add_edge("first", "second", when="next")
+            .add_edge("second", "third", when="done")
+            .build()
+        )
+        description = agent.describe()
+        self.assertEqual(description["entry"], "first")
+        self.assertEqual(description["nodes"], ["first", "second", "third"])
+        self.assertEqual(
+            description["edges"],
+            [
+                {"source": "first", "target": "second", "when": "next"},
+                {"source": "second", "target": "third", "when": "done"},
+            ],
+        )
+
     def test_agent_requires_mapping_input(self) -> None:
         agent = (
             AgentBuilder("agent")
