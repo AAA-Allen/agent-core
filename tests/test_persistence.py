@@ -240,6 +240,68 @@ class GraphRuntimePersistenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid run record"):
             self.store.load("bad-lifecycle")
 
+    def test_run_store_rejects_invalid_lifecycle_transition_log(self) -> None:
+        path = Path(self._tmp.name) / "bad-transition.events.json"
+        path.write_text(
+            '{"run_id":"bad-transition","events":['
+            '{"run_id":"bad-transition","sequence":1,"event_id":"e1",'
+            '"event_type":"run.created","from_status":null,"to_status":"PENDING",'
+            '"occurred_at":"2026-10-24T00:00:00+00:00"},'
+            '{"run_id":"bad-transition","sequence":2,"event_id":"e2",'
+            '"event_type":"run.completed","from_status":"PENDING","to_status":"COMPLETED",'
+            '"occurred_at":"2026-10-24T00:00:01+00:00"}]}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid lifecycle event record"):
+            self.store.load_lifecycle_events("bad-transition")
+
+    def test_run_store_rejects_invalid_lifecycle_transition_on_save(self) -> None:
+        from agent_core import LifecycleEvent, LifecycleStatus
+        from datetime import datetime, timezone
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        events = (
+            LifecycleEvent("bad-save", 1, "e1", "run.created", None,
+                           LifecycleStatus.PENDING, timestamp),
+            LifecycleEvent("bad-save", 2, "e2", "run.completed",
+                           LifecycleStatus.PENDING, LifecycleStatus.COMPLETED, timestamp),
+        )
+        with self.assertRaisesRegex(ValueError, "lifecycle event transition is invalid"):
+            self.store.save_lifecycle_events("bad-save", events)
+
+    def test_run_store_rejects_empty_lifecycle_event_sequence(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot be empty"):
+            self.store.save_lifecycle_events("empty-events", ())
+
+    def test_run_store_cleans_temporary_result_when_replace_fails(self) -> None:
+        from pathlib import Path
+        from unittest.mock import patch
+        from agent_core import RunResult, RunStatus
+
+        result = RunResult("replace-failure", RunStatus.COMPLETED, {}, ())
+        with patch.object(Path, "replace", side_effect=OSError("replace failed")):
+            with self.assertRaisesRegex(OSError, "replace failed"):
+                self.store.save(result)
+        self.assertEqual(list(Path(self._tmp.name).glob("*.tmp")), [])
+
+    def test_run_store_rejects_result_status_mismatch_with_lifecycle(self) -> None:
+        path = Path(self._tmp.name) / "status-mismatch.json"
+        path.write_text(
+            '{"run_id":"status-mismatch","status":"FAILED","outputs":{},"trace":[],'
+            '"lifecycle_events":[{"run_id":"status-mismatch","sequence":1,"event_id":"e1",'
+            '"event_type":"run.created","from_status":null,"to_status":"PENDING",'
+            '"occurred_at":"2026-10-24T00:00:00+00:00"},'
+            '{"run_id":"status-mismatch","sequence":2,"event_id":"e2",'
+            '"event_type":"run.running","from_status":"PENDING","to_status":"RUNNING",'
+            '"occurred_at":"2026-10-24T00:00:01+00:00"},'
+            '{"run_id":"status-mismatch","sequence":3,"event_id":"e3",'
+            '"event_type":"run.completed","from_status":"RUNNING","to_status":"COMPLETED",'
+            '"occurred_at":"2026-10-24T00:00:02+00:00"}]}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid run record"):
+            self.store.load("status-mismatch")
+
 
 if __name__ == "__main__":
     unittest.main()

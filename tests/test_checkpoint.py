@@ -46,6 +46,12 @@ class CheckpointTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "step_count cannot move backwards"):
             store.save(Checkpoint("run-1", "graph-v1", "old", {}, 2, 2))
 
+    def test_memory_store_rejects_conflicting_checkpoint_without_progress(self) -> None:
+        store = InMemoryCheckpointStore()
+        store.save(Checkpoint("run-1", "graph-v1", "next", {"value": 1}, 2, 3))
+        with self.assertRaisesRegex(ValueError, "cannot change without progress"):
+            store.save(Checkpoint("run-1", "graph-v1", "other", {"value": 2}, 2, 3))
+
     def test_memory_store_checks_graph_compatibility(self) -> None:
         store = InMemoryCheckpointStore()
         store.save(Checkpoint("run-1", "graph-v1", "next", {}, 1, 1))
@@ -89,9 +95,24 @@ class CheckpointTests(unittest.TestCase):
                 store.save(Checkpoint("run-1", "graph-v1", None, {}, 2, 1))
             with self.assertRaisesRegex(ValueError, "graph_id cannot change"):
                 store.save(Checkpoint("run-1", "graph-v2", None, {}, 3, 3))
+            with self.assertRaisesRegex(ValueError, "cannot change without progress"):
+                store.save(Checkpoint("run-1", "graph-v1", "other", {}, 2, 2))
             (Path(directory) / "broken.json").write_text("{bad", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "invalid checkpoint"):
                 store.load("broken")
+
+    def test_file_store_cleans_temporary_file_when_replace_fails(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = FileCheckpointStore(Path(directory))
+            checkpoint = Checkpoint("replace-failure", "graph-v1", "next", {}, 1, 1)
+            with patch.object(Path, "replace", side_effect=OSError("replace failed")):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    store.save(checkpoint)
+            self.assertEqual(list(Path(directory).glob("*.tmp")), [])
 
 
 if __name__ == "__main__":

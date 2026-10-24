@@ -1,8 +1,9 @@
-"""Minimal run persistence: save and load finished workflow runs as JSON files.
+"""Minimal run persistence: save workflow records and lifecycle events as JSON files.
 
-Scope is deliberately small: a finished run is written to one JSON file per
-run_id, including its lifecycle events. It is not an event-sourcing store and
-does not provide automatic resume, retry, or cancellation.
+Scope is deliberately small: a finished run is written to one run record per
+run_id, while lifecycle events are also available as a separate atomic log so
+running executions can be queried. It is not an event-sourcing store and does
+not provide automatic resume, retry, or cancellation.
 """
 
 from __future__ import annotations
@@ -13,11 +14,11 @@ from pathlib import Path
 from uuid import uuid4
 
 from .runtime import RunResult, RunStatus, TraceEvent, _validate_run_id
-from .lifecycle import LifecycleEvent, LifecycleStatus
+from .lifecycle import LifecycleEvent, LifecycleStatus, RunLifecycle
 
 
 class RunStore:
-    """Persist finished workflow runs as one JSON file per run_id."""
+    """Persist terminal workflow results and lifecycle events per run_id."""
 
     def __init__(self, directory: str | Path) -> None:
         self._directory = Path(directory)
@@ -35,8 +36,15 @@ class RunStore:
         payload = json.dumps(
             _result_to_dict(result), ensure_ascii=False, indent=2, allow_nan=False
         )
-        tmp.write_text(payload, encoding="utf-8")
-        tmp.replace(target)
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(target)
+        except Exception:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
         return target
 
     def load(self, run_id: str) -> RunResult | None:
@@ -66,20 +74,30 @@ class RunStore:
     def save_lifecycle_events(self, run_id: str, events: tuple[LifecycleEvent, ...]) -> Path:
         """Atomically persist the lifecycle event sequence for a run."""
         _validate_run_id(run_id)
+        if not events:
+            raise ValueError("lifecycle event sequence cannot be empty")
         for expected_sequence, event in enumerate(events, start=1):
             if event.run_id != run_id or event.sequence != expected_sequence:
                 raise ValueError("invalid lifecycle event sequence")
+        RunLifecycle.from_events(events)
         self._directory.mkdir(parents=True, exist_ok=True)
         target = self._directory / f"{run_id}.events.json"
         tmp = self._directory / f".{run_id}.{uuid4().hex}.events.json.tmp"
-        tmp.write_text(
-            json.dumps({
-                "run_id": run_id,
-                "events": [_lifecycle_event_to_dict(event) for event in events],
-            }, ensure_ascii=False, indent=2, allow_nan=False),
-            encoding="utf-8",
-        )
-        tmp.replace(target)
+        try:
+            tmp.write_text(
+                json.dumps({
+                    "run_id": run_id,
+                    "events": [_lifecycle_event_to_dict(event) for event in events],
+                }, ensure_ascii=False, indent=2, allow_nan=False),
+                encoding="utf-8",
+            )
+            tmp.replace(target)
+        except Exception:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
         return target
 
     def load_lifecycle_events(self, run_id: str) -> tuple[LifecycleEvent, ...]:
@@ -96,7 +114,7 @@ class RunStore:
             for expected_sequence, event in enumerate(events, start=1):
                 if event.run_id != run_id or event.sequence != expected_sequence:
                     raise ValueError("invalid lifecycle event sequence")
-            return events
+            return RunLifecycle.from_events(events).events
         except (OSError, json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
             raise ValueError("invalid lifecycle event record") from exc
 
@@ -145,6 +163,10 @@ def _dict_to_result(payload: dict) -> RunResult:
     lifecycle_events = tuple(
         _dict_to_lifecycle_event(event) for event in payload.get("lifecycle_events", [])
     )
+    if lifecycle_events:
+        lifecycle_events = RunLifecycle.from_events(lifecycle_events).events
+        if lifecycle_events[-1].to_status.value != payload["status"]:
+            raise ValueError("run status does not match lifecycle event history")
     for expected_sequence, event in enumerate(lifecycle_events, start=1):
         if event.run_id != payload["run_id"]:
             raise ValueError("lifecycle event run_id does not match run record")

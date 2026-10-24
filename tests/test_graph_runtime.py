@@ -324,6 +324,36 @@ class GraphRuntimeTests(unittest.TestCase):
             runtime.run(graph, {}, run_id="store-failure")
         from agent_core import LifecycleStatus
         self.assertEqual(runtime.get_status("store-failure"), LifecycleStatus.COMPLETED)
+        self.assertFalse(runtime.cancel("store-failure"))
+
+    def test_runtime_rejects_duplicate_persisted_run_id(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from agent_core import RunStore
+
+        graph = Graph().add_node("done", lambda ctx: NodeResult.success()).set_entry("done").compile()
+        with tempfile.TemporaryDirectory() as directory:
+            store = RunStore(Path(directory))
+            Runtime(store=store).run(graph, {}, run_id="duplicate-run")
+            with self.assertRaisesRegex(ValueError, "persisted"):
+                Runtime(store=store).run(graph, {}, run_id="duplicate-run")
+
+    def test_lifecycle_event_store_failure_does_not_leave_half_initialized_run(self) -> None:
+        class BrokenEventStore:
+            def save(self, result):
+                return None
+
+            def load(self, run_id):
+                return None
+
+            def save_lifecycle_events(self, run_id, events):
+                raise OSError("event storage unavailable")
+
+        graph = Graph().add_node("done", lambda ctx: NodeResult.success()).set_entry("done").compile()
+        runtime = Runtime(store=BrokenEventStore())
+        with self.assertRaisesRegex(OSError, "event storage unavailable"):
+            runtime.run(graph, {}, run_id="event-store-failure")
+        self.assertIsNone(runtime.get_status("event-store-failure"))
 
     def test_runtime_store_exposes_running_lifecycle_to_fresh_instance(self) -> None:
         import tempfile
@@ -425,6 +455,30 @@ class GraphRuntimeTests(unittest.TestCase):
         worker.join(1)
         self.assertFalse(worker.is_alive())
         self.assertEqual(holder["result"].status, RunStatus.CANCELED)
+
+    def test_concurrent_resume_for_active_run_is_rejected(self) -> None:
+        import threading
+        from agent_core import Checkpoint
+
+        started = threading.Event()
+        release = threading.Event()
+        runtime = Runtime()
+
+        def slow(ctx):
+            started.set()
+            release.wait(1)
+            return NodeResult.success()
+
+        graph = Graph().add_node("slow", slow).set_entry("slow").compile()
+        worker = threading.Thread(target=lambda: runtime.run(graph, {}, run_id="active-resume"))
+        worker.start()
+        self.assertTrue(started.wait(1))
+        checkpoint = Checkpoint("active-resume", "graph", "slow", {}, 0, 0)
+        with self.assertRaisesRegex(ValueError, "already executing"):
+            runtime.resume(graph, checkpoint)
+        release.set()
+        worker.join(1)
+        self.assertFalse(worker.is_alive())
 
     def test_resume_rejects_incompatible_or_terminal_checkpoint(self) -> None:
         from agent_core import Checkpoint

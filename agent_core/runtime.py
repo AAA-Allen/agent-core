@@ -249,6 +249,7 @@ class Runtime:
             raise TypeError("store must implement save and load")
         self._store = store
         self._lifecycles: dict[str, "RunLifecycle"] = {}
+        self._active_runs: set[str] = set()
         self._cancel_requests: set[str] = set()
         self._cancel_lock = threading.Lock()
 
@@ -256,18 +257,25 @@ class Runtime:
         """Execute a compiled graph synchronously until a terminal result."""
         identity = uuid4().hex if run_id is None else run_id
         lifecycle = self._begin_lifecycle(identity)
+        self._claim_active(identity)
         try:
             result = self._execute(graph, input, run_id=identity)
         except Exception:
             self._finish_lifecycle(lifecycle, RunStatus.FAILED, reason_code="RUNTIME_EXCEPTION")
-            self._persist_lifecycle(lifecycle)
+            try:
+                self._persist_lifecycle(lifecycle)
+            finally:
+                self._release_active(identity)
             raise
         self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
-        self._persist_lifecycle(lifecycle)
-        result = replace(result, lifecycle_events=lifecycle.events)
-        self._persist_result(result)
-        with self._cancel_lock:
-            self._cancel_requests.discard(identity)
+        try:
+            self._persist_lifecycle(lifecycle)
+            result = replace(result, lifecycle_events=lifecycle.events)
+            self._persist_result(result)
+        finally:
+            with self._cancel_lock:
+                self._cancel_requests.discard(identity)
+            self._release_active(identity)
         return result
 
     def resume(self, graph: Any, checkpoint: Any) -> RunResult:
@@ -285,24 +293,29 @@ class Runtime:
             raise ValueError("checkpoint has no next_node to resume")
         if checkpoint.next_node not in graph.nodes:
             raise ValueError("checkpoint next_node does not exist in graph")
-        lifecycle = self._lifecycles.get(checkpoint.run_id)
-        if lifecycle is None:
-            lifecycle = self._load_persisted_lifecycle(checkpoint.run_id)
+        self._claim_active(checkpoint.run_id)
+        try:
+            lifecycle = self._lifecycles.get(checkpoint.run_id)
             if lifecycle is None:
-                lifecycle = self._begin_lifecycle(checkpoint.run_id)
+                lifecycle = self._load_persisted_lifecycle(checkpoint.run_id)
+                if lifecycle is None:
+                    lifecycle = self._begin_lifecycle(checkpoint.run_id)
+                else:
+                    self._lifecycles[checkpoint.run_id] = lifecycle
+                    if lifecycle.status.value == "RUNNING":
+                        lifecycle.recover()
+                    else:
+                        lifecycle.resume()
+                    self._persist_lifecycle(lifecycle)
             else:
-                self._lifecycles[checkpoint.run_id] = lifecycle
                 if lifecycle.status.value == "RUNNING":
                     lifecycle.recover()
                 else:
                     lifecycle.resume()
                 self._persist_lifecycle(lifecycle)
-        else:
-            if lifecycle.status.value == "RUNNING":
-                lifecycle.recover()
-            else:
-                lifecycle.resume()
-            self._persist_lifecycle(lifecycle)
+        except Exception:
+            self._release_active(checkpoint.run_id)
+            raise
         try:
             result = self._execute(
                 graph, checkpoint.state, run_id=checkpoint.run_id,
@@ -312,14 +325,20 @@ class Runtime:
             )
         except Exception:
             self._finish_lifecycle(lifecycle, RunStatus.FAILED, reason_code="RUNTIME_EXCEPTION")
-            self._persist_lifecycle(lifecycle)
+            try:
+                self._persist_lifecycle(lifecycle)
+            finally:
+                self._release_active(checkpoint.run_id)
             raise
         self._finish_lifecycle(lifecycle, result.status, reason_code=result.reason_code)
-        self._persist_lifecycle(lifecycle)
-        result = replace(result, lifecycle_events=lifecycle.events)
-        self._persist_result(result)
-        with self._cancel_lock:
-            self._cancel_requests.discard(checkpoint.run_id)
+        try:
+            self._persist_lifecycle(lifecycle)
+            result = replace(result, lifecycle_events=lifecycle.events)
+            self._persist_result(result)
+        finally:
+            with self._cancel_lock:
+                self._cancel_requests.discard(checkpoint.run_id)
+            self._release_active(checkpoint.run_id)
         return result
 
     def get_status(self, run_id: str):
@@ -385,6 +404,16 @@ class Runtime:
         with self._cancel_lock:
             return run_id in self._cancel_requests
 
+    def _claim_active(self, run_id: str) -> None:
+        with self._cancel_lock:
+            if run_id in self._active_runs:
+                raise ValueError("run_id is already executing")
+            self._active_runs.add(run_id)
+
+    def _release_active(self, run_id: str) -> None:
+        with self._cancel_lock:
+            self._active_runs.discard(run_id)
+
     def _stop_reason(self, run_id: str, started_monotonic: float) -> str | None:
         if self._is_cancel_requested(run_id):
             return "CANCEL_REQUESTED"
@@ -401,10 +430,16 @@ class Runtime:
         existing = self._load_persisted_lifecycle(run_id)
         if existing is not None:
             raise ValueError("run_id already has a persisted lifecycle")
+        if self._store is not None and self._store.load(run_id) is not None:
+            raise ValueError("run_id already has a persisted result")
         lifecycle = RunLifecycle(run_id)
         lifecycle.transition(LifecycleStatus.RUNNING)
         self._lifecycles[run_id] = lifecycle
-        self._persist_lifecycle(lifecycle)
+        try:
+            self._persist_lifecycle(lifecycle)
+        except Exception:
+            self._lifecycles.pop(run_id, None)
+            raise
         return lifecycle
 
     def _load_persisted_lifecycle(self, run_id: str):

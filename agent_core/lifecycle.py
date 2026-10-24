@@ -162,8 +162,11 @@ class RunLifecycle:
                 if status is not LifecycleStatus.RUNNING \
                         or event.to_status is not LifecycleStatus.RUNNING:
                     raise ValueError("lifecycle recovery transition is invalid")
-            elif event.to_status not in _ALLOWED_TRANSITIONS[status]:
-                raise ValueError("lifecycle event transition is invalid")
+            else:
+                expected_event_type = f"run.{event.to_status.value.lower()}"
+                if event.event_type != expected_event_type \
+                        or event.to_status not in _ALLOWED_TRANSITIONS[status]:
+                    raise ValueError("lifecycle event transition is invalid")
             status = event.to_status
         instance = cls.__new__(cls)
         instance.run_id = run_id

@@ -19,7 +19,7 @@
 | `TraceEvent` / `RunResult` | 保存步骤状态、UTC 开始时间、耗时、错误类型与最终状态 |
 | `Tool` / `ToolRegistry` | 注册唯一工具名，检查调用方声明的能力集合，统一返回成功、阻断或失败 |
 | `tool_step` | 将工具调用包装为工作流步骤，使工具状态进入同一条执行 Trace |
-| `RunStore` | 把已结束的运行（完成、阻断、失败）按 run_id 落盘为单个 JSON 文件，原子写入，可读回 |
+| `RunStore` | 把终态运行结果按 run_id 原子落盘，并单独保存生命周期事件，支持查询运行中的状态 |
 
 输入与步骤输出要求是 JSON 可序列化对象。运行时复制快照，避免后续步骤修改前一步的记录。Trace 不保存异常消息，防止泄露工具返回的敏感内容。
 
@@ -74,7 +74,7 @@ result = Runtime().run(graph, input={"text": "hello"})
 图节点只能返回 `NodeResult`，由 Runtime 验证并合并 `updates`。节点状态为
 `NodeStatus.SUCCEEDED`、`BLOCKED` 或 `FAILED`；阻断和失败会停止当前运行。图运行支持条件路由、静态校验、最大执行步数和统一 Trace。`simulated=True` 会保留在最终结果中，不能当作真实工具执行证据。
 
-当前 v0.1 已包含线性图、条件路由、状态增量、Trace、工具适配和最大步数限制；不包含重试、取消、并行、LLM 或多 Agent 调度。
+当前 v0.1 已包含线性图、条件路由、状态增量、Trace、工具适配、最大步数限制、协作式取消、节点边界超时和运行生命周期事件；不包含重试、并行、LLM 或多 Agent 调度。
 
 v0.2 的第一步提供 `Checkpoint`、`CheckpointStore`、`InMemoryCheckpointStore` 和 `FileCheckpointStore` 快照协议。将 `checkpoint_store` 传给 `Runtime` 后，每次成功节点边界会保存状态、状态版本、下一节点和执行步数；`load_for()` 会校验快照所属的 `graph_id`。它们只保存可恢复状态，不自动恢复运行，也不承诺 exactly-once 执行。
 
@@ -98,12 +98,19 @@ events = runtime.get_lifecycle_events(result.run_id)
 accepted = runtime.cancel(result.run_id)
 ```
 
+需要跨 Runtime 实例查询状态时，构造器传入现有 `RunStore`：
+
+```python
+store = RunStore("runs")
+runtime = Runtime(store=store)
+```
+
 `cancel()` 只发出协作式取消请求。Runtime 会在节点开始前或节点返回后确认请求，无法安全强制中断正在运行的同步 Python 函数。`timeout_seconds` 也只在节点边界生效；超时返回 `CANCELED`，原因码为 `TIMEOUT`，不会伪装成普通业务失败。终态结果及其生命周期事件会由 `RunStore` 一起保存。
 
 ### 公共 API
 
 ```python
-from agent_core import Graph, NodeResult, NodeStatus, Runtime
+from agent_core import Graph, NodeResult, NodeStatus, RunStore, Runtime
 
 def validate(ctx):
     if not ctx.input.get("text"):

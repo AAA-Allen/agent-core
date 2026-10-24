@@ -62,6 +62,19 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "transition"):
             RunLifecycle.from_events(events)
 
+    def test_rehydration_rejects_event_type_mismatch(self) -> None:
+        from datetime import datetime, timezone
+        from agent_core import LifecycleEvent
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        events = (
+            LifecycleEvent("run-1", 1, "e1", "run.created", None, LifecycleStatus.PENDING, timestamp),
+            LifecycleEvent("run-1", 2, "e2", "run.wrong", LifecycleStatus.PENDING,
+                           LifecycleStatus.RUNNING, timestamp),
+        )
+        with self.assertRaisesRegex(ValueError, "transition"):
+            RunLifecycle.from_events(events)
+
     def test_explicit_recovery_records_running_recovery(self) -> None:
         lifecycle = RunLifecycle("run-1")
         lifecycle.transition(LifecycleStatus.RUNNING)
