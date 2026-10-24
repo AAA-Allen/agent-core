@@ -99,6 +99,16 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "occurred_at must be nonempty"):
             RunLifecycle.from_events(events)
 
+    def test_rehydration_rejects_invalid_event_timestamp(self) -> None:
+        from agent_core import LifecycleEvent
+
+        events = (
+            LifecycleEvent("run-1", 1, "e1", "run.created", None,
+                           LifecycleStatus.PENDING, "yesterday"),
+        )
+        with self.assertRaisesRegex(ValueError, "occurred_at must be ISO-8601"):
+            RunLifecycle.from_events(events)
+
     def test_explicit_recovery_records_running_recovery(self) -> None:
         lifecycle = RunLifecycle("run-1")
         lifecycle.transition(LifecycleStatus.RUNNING)

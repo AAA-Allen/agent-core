@@ -152,6 +152,10 @@ class RunLifecycle:
                 raise ValueError("lifecycle event ids must be unique")
             if not isinstance(event.occurred_at, str) or not event.occurred_at.strip():
                 raise ValueError("lifecycle event occurred_at must be nonempty")
+            try:
+                datetime.fromisoformat(event.occurred_at)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("lifecycle event occurred_at must be ISO-8601") from exc
             event_ids.add(event.event_id)
         first = events[0]
         if first.event_type != "run.created" or first.from_status is not None \

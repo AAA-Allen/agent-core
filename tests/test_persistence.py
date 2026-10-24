@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -345,6 +346,16 @@ class GraphRuntimePersistenceTests(unittest.TestCase):
         self.assertEqual(errors, [])
         for result in results:
             self.assertEqual(self.store.load(result.run_id), result)
+
+    def test_run_store_writes_schema_version_to_lifecycle_log(self) -> None:
+        from agent_core import LifecycleEvent, LifecycleStatus
+        from datetime import datetime, timezone
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        events = (LifecycleEvent("schema-events", 1, "e1", "run.created", None,
+                                 LifecycleStatus.PENDING, timestamp),)
+        path = self.store.save_lifecycle_events("schema-events", events)
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["schema_version"], 1)
 
     def test_run_store_rejects_invalid_lifecycle_transition_on_save(self) -> None:
         from agent_core import LifecycleEvent, LifecycleStatus
