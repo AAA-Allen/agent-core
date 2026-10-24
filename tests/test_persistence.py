@@ -323,6 +323,29 @@ class GraphRuntimePersistenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid lifecycle event record"):
             self.store.load_lifecycle_events("unknown-events")
 
+    def test_run_store_serializes_concurrent_saves_without_partial_records(self) -> None:
+        import threading
+
+        results = [
+            _sample_result(f"concurrent-{index}") for index in range(4)
+        ]
+        errors: list[Exception] = []
+
+        def save(result: RunResult) -> None:
+            try:
+                self.store.save(result)
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=save, args=(result,)) for result in results]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(1)
+        self.assertEqual(errors, [])
+        for result in results:
+            self.assertEqual(self.store.load(result.run_id), result)
+
     def test_run_store_rejects_invalid_lifecycle_transition_on_save(self) -> None:
         from agent_core import LifecycleEvent, LifecycleStatus
         from datetime import datetime, timezone

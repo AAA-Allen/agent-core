@@ -150,6 +150,8 @@ class RunLifecycle:
             if not isinstance(event.event_id, str) or not event.event_id.strip() \
                     or event.event_id in event_ids:
                 raise ValueError("lifecycle event ids must be unique")
+            if not isinstance(event.occurred_at, str) or not event.occurred_at.strip():
+                raise ValueError("lifecycle event occurred_at must be nonempty")
             event_ids.add(event.event_id)
         first = events[0]
         if first.event_type != "run.created" or first.from_status is not None \

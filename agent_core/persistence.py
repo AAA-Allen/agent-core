@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
@@ -23,6 +24,7 @@ class RunStore:
 
     def __init__(self, directory: str | Path) -> None:
         self._directory = Path(directory)
+        self._lock = threading.RLock()
 
     @property
     def directory(self) -> Path:
@@ -30,6 +32,10 @@ class RunStore:
 
     def save(self, result: RunResult) -> Path:
         """Write one run record atomically; an existing run_id is overwritten."""
+        with self._lock:
+            return self._save(result)
+
+    def _save(self, result: RunResult) -> Path:
         self._directory.mkdir(parents=True, exist_ok=True)
         _validate_run_id(result.run_id)
         if result.lifecycle_events:
@@ -82,6 +88,10 @@ class RunStore:
 
     def save_lifecycle_events(self, run_id: str, events: tuple[LifecycleEvent, ...]) -> Path:
         """Atomically persist the lifecycle event sequence for a run."""
+        with self._lock:
+            return self._save_lifecycle_events(run_id, events)
+
+    def _save_lifecycle_events(self, run_id: str, events: tuple[LifecycleEvent, ...]) -> Path:
         _validate_run_id(run_id)
         if not events:
             raise ValueError("lifecycle event sequence cannot be empty")
