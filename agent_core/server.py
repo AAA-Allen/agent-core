@@ -25,6 +25,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 from .agent import Agent
+from .nodes import build_agent_from_config
 from .persistence import RunStore, _lifecycle_event_to_dict
 from .runtime import Runtime, _validate_run_id
 
@@ -157,6 +158,31 @@ def build_default_registry(*, runtime: Runtime) -> AgentRegistry:
     registry = AgentRegistry()
     registry.register(_build_workbench(runtime, _default_tools()))
     return registry
+
+
+def load_agents_from_config(
+    path: str | Path,
+    *,
+    runtime: Runtime,
+    tools: Any = None,
+) -> list[Agent]:
+    """Build agents from a JSON config file (single config or ``agents`` list)."""
+    from .tools import Tool, ToolRegistry
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(payload, Mapping) and isinstance(payload.get("agents"), list):
+        configs: list[Mapping[str, Any]] = payload["agents"]
+    elif isinstance(payload, Mapping):
+        configs = [payload]
+    else:
+        raise ValueError("agent config file must be an object or {'agents': [...]}")
+    if tools is None:
+        tools = _default_tools()
+    agents = [build_agent_from_config(config, runtime=runtime, tools=tools) for config in configs]
+    for agent in agents:
+        if not agent.spec.description:
+            logger.warning("config agent '%s' has no description", agent.spec.name)
+    return agents
 
 
 def _result_payload(result: Any) -> dict[str, Any]:
@@ -515,11 +541,24 @@ def main(argv: list[str] | None = None) -> int:
         "--frontend-dir", default=None,
         help="directory with the static frontend (default: ./frontend, then the repo checkout)",
     )
+    parser.add_argument(
+        "--config", default=None,
+        help="JSON file with declarative agent configs to load at startup",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     server = create_server(
         host=args.host, port=args.port, store_dir=args.store_dir, frontend_dir=args.frontend_dir,
     )
+    if args.config:
+        try:
+            for agent in load_agents_from_config(args.config, runtime=server.runtime):
+                server.registry.register(agent)
+        except (OSError, ValueError, TypeError) as exc:
+            logger.error("failed to load agent config %s: %s", args.config, exc)
+            server.server_close()
+            return 2
+        logger.info("loaded agents from %s", args.config)
     bound_host, bound_port = server.server_address[:2]
     logger.info("agent-core server listening on http://%s:%s", bound_host, bound_port)
     logger.info("agents: %s", ", ".join(server.registry.names()))

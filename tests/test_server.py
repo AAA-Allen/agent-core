@@ -150,6 +150,36 @@ class ServerApiTests(ServerTestBase):
         self.assertEqual(len(graph["edges"]), 3)
         self.assertEqual(graph["edges"][0], {"source": "intake", "target": "plan", "when": "planned"})
 
+    def test_config_agents_are_loaded_and_runnable(self) -> None:
+        from agent_core.server import load_agents_from_config
+
+        agents = load_agents_from_config("examples/support_agent.json", runtime=self.server.runtime)
+        for agent in agents:
+            self.server.registry.register(agent)
+
+        status, payload = self.request("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["agents"], ["support-triage", "workbench"])
+
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "support-triage", "input": {"task": "无法登录;收不到验证码"}},
+        )
+        self.assertEqual(status, 200)
+        run = payload["run"]
+        self.assertEqual(run["status"], "COMPLETED")
+        self.assertEqual(run["state"]["step_count"], 2)
+        self.assertIn("已拆解为 2 个步骤", run["state"]["summary"])
+
+    def test_config_file_rejects_invalid_payload(self) -> None:
+        import tempfile
+        from agent_core.server import load_agents_from_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "bad.json"
+            bad.write_text(json.dumps({"nodes": "not-a-list"}), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_agents_from_config(bad, runtime=self.server.runtime)
+
 
 class ServerLifecycleTests(ServerTestBase):
     def _register_slow_agent(self) -> threading.Event:

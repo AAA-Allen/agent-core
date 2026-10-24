@@ -1,0 +1,18 @@
+{
+  "name": "support-triage",
+  "instructions": "接收工单文本,拆解处理步骤,统计字数并输出摘要。",
+  "description": "Declarative example agent assembled entirely from the node factory library.",
+  "metadata": {"example": true},
+  "entry": "intake",
+  "nodes": [
+    {"id": "intake", "type": "validate_input", "params": {"field": "task", "blocked_reason": "EMPTY_TASK", "route": "plan"}},
+    {"id": "plan", "type": "split_steps", "params": {"field": "task", "into": "plan", "count_key": "step_count", "route": "stats"}},
+    {"id": "stats", "type": "tool", "params": {"name": "text_stats", "arguments": {"task": "{task}"}, "output_key": "text_stats", "route": "summary"}},
+    {"id": "summary", "type": "template", "params": {"updates": {"summary": "工单“{task}”已拆解为 {step_count} 个步骤。"}}}
+  ],
+  "edges": [
+    {"source": "intake", "target": "plan", "when": "plan"},
+    {"source": "plan", "target": "stats", "when": "stats"},
+    {"source": "stats", "target": "summary", "when": "summary"}
+  ]
+}
