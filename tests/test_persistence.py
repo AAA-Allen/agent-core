@@ -115,6 +115,15 @@ class RunStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid run record"):
             self.store.load("bad-trace-owner")
 
+        nested_path = self.store.directory / "bad-nested-output.json"
+        nested_path.write_text(
+            '{"run_id":"bad-nested-output","status":"COMPLETED",'
+            '"outputs":{"step":{"value":{"bad":NaN}}},"trace":[]}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid run record"):
+            self.store.load("bad-nested-output")
+
     def test_list_runs_sorted(self) -> None:
         self.store.save(_sample_result("run-b"))
         self.store.save(_sample_result("run-a"))

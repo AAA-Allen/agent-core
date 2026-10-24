@@ -13,7 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
-from .runtime import RunResult, RunStatus, TraceEvent, _validate_run_id
+from .runtime import RunResult, RunStatus, TraceEvent, _json_snapshot, _validate_run_id
 from .lifecycle import LifecycleEvent, LifecycleStatus, RunLifecycle
 
 
@@ -185,14 +185,16 @@ def _dict_to_result(payload: dict) -> RunResult:
             raise ValueError("lifecycle event run_id does not match run record")
         if event.sequence != expected_sequence:
             raise ValueError("lifecycle event sequence is not contiguous")
+    outputs = _json_snapshot(payload["outputs"])
+    state = _json_snapshot(payload.get("state", outputs))
     return RunResult(
         run_id=payload["run_id"],
         status=RunStatus(payload["status"]),
-        outputs=payload["outputs"],
+        outputs=outputs,
         trace=trace,
         stopped_at=payload.get("stopped_at"),
         reason_code=payload.get("reason_code"),
-        state=payload.get("state", payload["outputs"]),
+        state=state,
         simulated=payload.get("simulated", False),
         lifecycle_events=lifecycle_events,
     )
