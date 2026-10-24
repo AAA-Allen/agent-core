@@ -55,6 +55,8 @@ class RunStore:
             return None
         try:
             payload = json.loads(target.read_text(encoding="utf-8"))
+            if payload.get("schema_version", 1) != 1:
+                raise ValueError("unsupported run record schema_version")
             result = _dict_to_result(payload)
             if result.run_id != run_id:
                 raise ValueError("run_id does not match record filename")
@@ -86,6 +88,7 @@ class RunStore:
         try:
             tmp.write_text(
                 json.dumps({
+                "schema_version": 1,
                     "run_id": run_id,
                     "events": [_lifecycle_event_to_dict(event) for event in events],
                 }, ensure_ascii=False, indent=2, allow_nan=False),
@@ -110,6 +113,8 @@ class RunStore:
             payload = json.loads(target.read_text(encoding="utf-8"))
             if not isinstance(payload, dict) or payload.get("run_id") != run_id:
                 raise ValueError("lifecycle run_id does not match filename")
+            if payload.get("schema_version", 1) != 1:
+                raise ValueError("unsupported lifecycle event schema_version")
             events = tuple(_dict_to_lifecycle_event(event) for event in payload["events"])
             for expected_sequence, event in enumerate(events, start=1):
                 if event.run_id != run_id or event.sequence != expected_sequence:
@@ -121,6 +126,7 @@ class RunStore:
 
 def _result_to_dict(result: RunResult) -> dict:
     return {
+        "schema_version": 1,
         "run_id": result.run_id,
         "status": result.status.value,
         "outputs": dict(result.outputs),

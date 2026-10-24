@@ -86,6 +86,16 @@ class RunStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid run record"):
             self.store.load("requested")
 
+    def test_run_store_rejects_unknown_schema_version(self) -> None:
+        path = self.store.directory / "unknown-schema.json"
+        path.write_text(
+            '{"schema_version":2,"run_id":"unknown-schema",'
+            '"status":"COMPLETED","outputs":{},"trace":[]}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid run record"):
+            self.store.load("unknown-schema")
+
     def test_list_runs_sorted(self) -> None:
         self.store.save(_sample_result("run-b"))
         self.store.save(_sample_result("run-a"))
@@ -254,6 +264,15 @@ class GraphRuntimePersistenceTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "invalid lifecycle event record"):
             self.store.load_lifecycle_events("bad-transition")
+
+    def test_run_store_rejects_unknown_lifecycle_schema_version(self) -> None:
+        path = Path(self._tmp.name) / "unknown-events.events.json"
+        path.write_text(
+            '{"schema_version":2,"run_id":"unknown-events","events":[]}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid lifecycle event record"):
+            self.store.load_lifecycle_events("unknown-events")
 
     def test_run_store_rejects_invalid_lifecycle_transition_on_save(self) -> None:
         from agent_core import LifecycleEvent, LifecycleStatus
