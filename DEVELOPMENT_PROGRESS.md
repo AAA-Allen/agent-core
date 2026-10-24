@@ -55,6 +55,7 @@
 - RunStore 读取时校验结果 ID、outputs/state 映射类型和 Trace 的 run_id 归属。
 - RunStore 读取时对 outputs/state 执行完整 JSON 快照校验，拒绝嵌套非法值。
 - RunStore 写入时校验生命周期历史与 RunResult 状态一致，拒绝生成不可读记录。
+- RunStore Trace 校验允许运行级 `run.*` 事件使用空 step，同时约束节点事件的 step 和耗时。
 
 ## Acceptance
 
@@ -77,4 +78,5 @@
 - [x] RunStore 损坏结果结构和 Trace 归属校验已覆盖。
 - [x] RunStore outputs/state 嵌套 JSON 值校验已覆盖。
 - [x] RunStore 写入生命周期历史与结果状态一致性已覆盖。
+- [x] RunStore Trace 运行级事件与节点事件边界校验已覆盖。
 - 当前工作区已提交；未跟踪的 `agent_runtime_document_pack/` 按约定保持不变。

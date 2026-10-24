@@ -9,6 +9,7 @@ not provide automatic resume, retry, or cancellation.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
@@ -177,8 +178,18 @@ def _dict_to_result(payload: dict) -> RunResult:
         )
         for event in payload["trace"]
     )
-    if any(event.run_id != payload["run_id"] for event in trace):
-        raise ValueError("trace run_id does not match run record")
+    for event in trace:
+        if event.run_id != payload["run_id"]:
+            raise ValueError("trace run_id does not match run record")
+        if not isinstance(event.step, str):
+            raise ValueError("trace step must be a string")
+        if not event.step.strip() and not (
+            isinstance(event.event_type, str) and event.event_type.startswith("run.")
+        ):
+            raise ValueError("trace step must be nonempty for node events")
+        if not isinstance(event.duration_ms, (int, float)) or isinstance(event.duration_ms, bool) \
+                or not math.isfinite(event.duration_ms) or event.duration_ms < 0:
+            raise ValueError("trace duration_ms must be nonnegative and finite")
     lifecycle_events = tuple(
         _dict_to_lifecycle_event(event) for event in payload.get("lifecycle_events", [])
     )
