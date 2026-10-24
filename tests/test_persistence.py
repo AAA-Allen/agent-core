@@ -134,6 +134,17 @@ class RunStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid run record"):
             self.store.load("bad-trace-shape")
 
+        metadata_path = self.store.directory / "bad-trace-metadata.json"
+        metadata_path.write_text(
+            '{"run_id":"bad-trace-metadata","status":"COMPLETED",'
+            '"outputs":{},"trace":[{"run_id":"bad-trace-metadata","step":"s",'
+            '"status":"COMPLETED","started_at":"2026-10-24T00:00:00+00:00",'
+            '"duration_ms":1.0,"state_version":-1,"metadata":[]}]}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "invalid run record"):
+            self.store.load("bad-trace-metadata")
+
     def test_list_runs_sorted(self) -> None:
         self.store.save(_sample_result("run-b"))
         self.store.save(_sample_result("run-a"))

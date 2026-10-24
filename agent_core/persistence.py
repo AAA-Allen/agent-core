@@ -190,6 +190,11 @@ def _dict_to_result(payload: dict) -> RunResult:
         if not isinstance(event.duration_ms, (int, float)) or isinstance(event.duration_ms, bool) \
                 or not math.isfinite(event.duration_ms) or event.duration_ms < 0:
             raise ValueError("trace duration_ms must be nonnegative and finite")
+        if not isinstance(event.state_version, int) or isinstance(event.state_version, bool) \
+                or event.state_version < 0:
+            raise ValueError("trace state_version must be a nonnegative integer")
+        if not isinstance(event.metadata, dict):
+            raise ValueError("trace metadata must be an object")
     lifecycle_events = tuple(
         _dict_to_lifecycle_event(event) for event in payload.get("lifecycle_events", [])
     )
