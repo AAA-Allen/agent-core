@@ -151,16 +151,17 @@ class FileCheckpointStore:
 
     def load(self, run_id: str) -> Checkpoint | None:
         _validate_run_id(run_id)
-        target = self._directory / f"{run_id}.json"
-        if not target.is_file():
-            return None
-        try:
-            checkpoint = Checkpoint.from_dict(json.loads(target.read_text(encoding="utf-8")))
-            if checkpoint.run_id != run_id:
-                raise ValueError("checkpoint run_id does not match filename")
-            return checkpoint
-        except (OSError, json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
-            raise ValueError("invalid checkpoint record") from exc
+        with self._lock:
+            target = self._directory / f"{run_id}.json"
+            if not target.is_file():
+                return None
+            try:
+                checkpoint = Checkpoint.from_dict(json.loads(target.read_text(encoding="utf-8")))
+                if checkpoint.run_id != run_id:
+                    raise ValueError("checkpoint run_id does not match filename")
+                return checkpoint
+            except (OSError, json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
+                raise ValueError("invalid checkpoint record") from exc
 
     def load_for(self, run_id: str, graph_id: str) -> Checkpoint | None:
         if not isinstance(graph_id, str) or not graph_id.strip():

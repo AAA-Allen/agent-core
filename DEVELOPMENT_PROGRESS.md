@@ -4,7 +4,7 @@
 
 ## Baseline
 
-- 实际测试基线：167 passed（Checkpoint 存储并发保护加固后）
+- 实际测试基线：168 passed（持久化读写和 ToolRegistry 并发边界加固后）
 - 执行模型：同步、单进程、节点顺序执行
 - 现有 `RunStore`：保存完成后的 `RunResult`
 - 现有 `CheckpointStore`：保存节点边界快照，显式 `Runtime.resume()`
@@ -23,7 +23,7 @@
 
 ## Latest Verification
 
-最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 167 passed。
+最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 168 passed。
 
 ## Known Limits
 
@@ -69,6 +69,7 @@
 - Graph 的 Node/Edge 直接构造校验字段，CompiledGraph 保持节点定义不可变快照。
 - NodeResult 深拷贝 updates/output，ToolResult 校验状态字段并隔离 output，Checkpoint 覆盖嵌套状态快照。
 - 内存和文件 Checkpoint 存储复用单调性校验，并在进程内保护并发写入。
+- RunStore 读写、FileCheckpointStore 读删和 ToolRegistry 注册/查找均有进程内并发边界保护。
 - 生命周期事件 occurred_at 必须是可解析的 ISO-8601 时间。
 - 生命周期事件日志写入 schema_version=1，并有落盘形状测试。
 
@@ -107,4 +108,5 @@
 - [x] Graph Node/Edge 构造校验和 CompiledGraph 快照隔离已覆盖。
 - [x] NodeResult、ToolResult 和 Checkpoint 嵌套快照边界已覆盖。
 - [x] Checkpoint 存储并发写入和单调性保护已覆盖。
+- [x] 持久化读写和 ToolRegistry 并发访问边界已覆盖。
 - 当前工作区已提交；未跟踪的 `agent_runtime_document_pack/` 按约定保持不变。

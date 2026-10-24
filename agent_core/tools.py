@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import threading
 from typing import Any, Callable, Mapping
 
 from .runtime import RunContext, Step, StepOutcome, StepStatus, _json_snapshot
@@ -63,13 +64,15 @@ class ToolResult:
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
+        self._lock = threading.RLock()
 
     def register(self, tool: Tool) -> None:
         if not isinstance(tool, Tool):
             raise TypeError("tool must be a Tool")
-        if tool.name in self._tools:
-            raise ValueError(f"tool already registered: {tool.name}")
-        self._tools[tool.name] = tool
+        with self._lock:
+            if tool.name in self._tools:
+                raise ValueError(f"tool already registered: {tool.name}")
+            self._tools[tool.name] = tool
 
     def invoke(
         self, name: str, arguments: Mapping[str, Any], *,
@@ -77,7 +80,8 @@ class ToolRegistry:
     ) -> ToolResult:
         if not isinstance(name, str) or not name.strip():
             return ToolResult("<invalid>", ToolStatus.BLOCKED, reason_code="INVALID_TOOL_NAME")
-        tool = self._tools.get(name)
+        with self._lock:
+            tool = self._tools.get(name)
         if tool is None:
             return ToolResult(name, ToolStatus.BLOCKED, reason_code="TOOL_NOT_FOUND")
         if (not isinstance(granted_capabilities, frozenset)

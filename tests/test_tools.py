@@ -37,6 +37,25 @@ class ToolRegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.registry.register(Tool("echo", lambda args: {}))
 
+    def test_concurrent_registration_keeps_one_definition(self) -> None:
+        import threading
+
+        errors: list[Exception] = []
+
+        def register() -> None:
+            try:
+                self.registry.register(Tool("race", lambda args: {}))
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=register) for _ in range(4)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(1)
+        self.assertEqual(sum(isinstance(error, ValueError) for error in errors), 3)
+        self.assertEqual(self.registry.invoke("race", {}).status.value, "COMPLETED")
+
     def test_non_tool_registration_is_rejected(self) -> None:
         with self.assertRaises(TypeError):
             self.registry.register("not-a-tool")
