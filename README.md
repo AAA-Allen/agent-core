@@ -160,7 +160,34 @@ result = agent.run({"text": "hello"})
 # result.state["done"] is True
 ```
 
-Agent 节点收到的 `AgentNodeContext` 还包含 `model`、`tools`、`memory` 和 `cancel_requested`。`InMemoryMemory` 适合开发和测试；生产环境可实现 `MemoryStore` 接入自己的存储。`AgentResult.run` 保留底层 `RunResult`，因此不会丢失节点 Trace 或生命周期信息。
+Agent 节点收到的 `AgentNodeContext` 还包含 `model`、`tools`、`memory` 和 `cancel_requested`。`InMemoryMemory` 适合开发和测试；生产环境可实现 `MemoryStore` 接入自己的存储。`AgentResult.run` 保留底层 `RunResult`，因此不会丢失节点 Trace 或生命周期信息。`agent.describe()` 返回编译后的图拓扑（入口、节点、边），可用于 UI 展示和自省。
+
+## HTTP 服务与工作台
+
+`agent_core/server.py` 用纯标准库把运行时暴露为 HTTP API，并托管 `frontend/` 工作台：
+
+```bash
+python -m agent_core.server --host 127.0.0.1 --port 8000 --store-dir outputs/server_runs
+```
+
+打开 `http://127.0.0.1:8000` 即得工作台：提交任务 → 实时生命周期时间线 → 节点级 Trace → 结果面板。服务不可达时页面自动进入离线演示模式，不会伪装成真实执行。
+
+服务端行为与运行时语义一致：运行是同步状态机 + 线程外壳，不引入并行节点调度；`wait=false` 只是把执行移到后台线程，生命周期事件照常原子落盘。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/health` | 存活检查与已注册 Agent 列表 |
+| `GET` | `/api/agents` | Agent 描述与图拓扑（`Agent.describe()`） |
+| `POST` | `/api/runs` | 创建运行；`wait=true`（默认）同步返回终态，`wait=false` 返回 `202` 后轮询 |
+| `GET` | `/api/runs` | 已持久化的运行列表与活跃运行 |
+| `GET` | `/api/runs/{id}` | 终态结果（含 Trace 与生命周期事件） |
+| `GET` | `/api/runs/{id}/status` | 当前生命周期状态（含异步运行的 `PENDING`/`RUNNING`） |
+| `GET` | `/api/runs/{id}/events` | 生命周期事件序列 |
+| `POST` | `/api/runs/{id}/cancel` | 发出协作式取消请求，返回是否受理 |
+
+错误统一为 `{"error": {"code", "message"}}`：非法 JSON/输入返回 `400`，未知 Agent 或运行返回 `404`，重复占用 `run_id` 返回 `409`，路径穿越与不支持类型拒绝访问。静态文件只从 `frontend/` 目录解析。
+
+`agent.run()` 是同步调用，异步模式由服务器线程承载；取消仍只能在节点边界生效，与 Runtime 的协作式取消语义一致。
 
 ## 许可
 

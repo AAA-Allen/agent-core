@@ -116,3 +116,35 @@
 - [x] 同一 run_id 并发启动只允许一个 Runtime 执行实例。
 - [x] Runtime 生命周期缓存并发访问边界已覆盖。
 - 当前工作区已提交；未跟踪的 `agent_runtime_document_pack/` 按约定保持不变。
+
+## Session 2026-10-25:Agent 外壳测试、HTTP 服务与工作台
+
+主线:让运行时可被真实应用使用——Agent 外壳补齐契约测试,新增 HTTP 服务与前端工作台。
+
+### 已完成
+
+- [x] `agent_core/agent.py` Agent 外壳 17 项契约测试(构造校验、依赖注入、内存快照隔离、阻断语义、协作式取消、RunStore 持久化、`describe()` 图拓扑)。
+- [x] `AgentResult` 补充 `reason_code`/`stopped_at` 透传;`Agent.describe()` 暴露编译图拓扑。
+- [x] `agent_core/server.py`:纯标准库 `ThreadingHTTPServer` 实现 HTTP API(健康检查、Agent 自省、同步/异步运行、结果/状态/事件查询、协作式取消)与 `frontend/` 静态托管。
+- [x] 异步模式:POST `/api/runs` `wait=false` 返回 202,后台线程执行,状态端点回 `PENDING`(领取前)→ 真实生命周期 → 终态;活跃 `run_id` 冲突返回 409。
+- [x] 错误契约:非法 JSON/输入 400、未知 Agent/运行 404、`run_id` 冲突 409、请求体超限 413、路径穿越拒绝;错误统一 `{"error": {code, message}}`。
+- [x] `frontend/app.js` 重写:连接探测(在线/离线演示双模式)、异步提交 + 轮询、实时生命周期时间线、节点级 Trace 展示、运行中取消按钮、localStorage 历史持久化与恢复、详情面板(状态/原因码/执行路径/最终状态 JSON)。
+- [x] 服务端 14 项测试(含异步完成、run_id 复用拒绝、活跃冲突、异步协作取消、静态托管与穿越防护)。
+- [x] 端到端验证:curl 全端点 + 内置浏览器 GUI 黑盒(提交 → 实时时间线 → 完成 → 历史恢复),截图确认视觉状态。
+
+### 修复
+
+- 异步状态查询顺序:先查 Runtime 真实生命周期、仅在领取前回 `PENDING`,避免活跃集合掩盖 RUNNING 状态。
+- 前端 `runLiveTask` 换 `run_id` 后同步更新 `state.activeId`,修复完成后界面不刷新的问题。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 201 passed(170 基线 + Agent 外壳 18 + HTTP 服务 13)。
+
+### Known Limits
+
+- 运行仍为同步状态机;异步模式只是服务器线程外壳,无并行节点调度、无重试、无强制中断。
+- 取消只在节点边界生效;演示 Agent 节点执行毫秒级完成,取消窗口主要面向长耗时自定义节点。
+- `RunStore` 默认目录 `outputs/server_runs`(已 gitignore);服务器默认绑定 127.0.0.1,未做身份鉴权,仅限本机使用。
+- 前端历史存于浏览器 localStorage(最近 30 条);服务端运行记录以 `RunStore` 落盘为准。
+- `agent_runtime_document_pack/` 按约定保持未跟踪。
