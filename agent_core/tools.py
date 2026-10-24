@@ -58,6 +58,12 @@ class ToolResult:
             not isinstance(self.error_type, str) or not self.error_type.strip()
         ):
             raise ValueError("tool result error_type must be nonempty")
+        if self.status is ToolStatus.COMPLETED and self.reason_code is not None:
+            raise ValueError("completed tools cannot provide a reason_code")
+        if self.status is not ToolStatus.COMPLETED and not self.reason_code:
+            raise ValueError("non-completed tools require a reason_code")
+        if self.status is not ToolStatus.FAILED and self.error_type is not None:
+            raise ValueError("only failed tools can provide an error_type")
         object.__setattr__(self, "output", _json_snapshot(self.output))
 
 

@@ -106,6 +106,20 @@ class ToolRegistryTests(unittest.TestCase):
             ToolResult("echo", "COMPLETED")
         with self.assertRaises(ValueError):
             ToolResult("echo", ToolStatus.FAILED, reason_code=" ")
+        with self.assertRaises(ValueError):
+            ToolResult("echo", ToolStatus.COMPLETED, reason_code="UNEXPECTED")
+        with self.assertRaises(ValueError):
+            ToolResult("echo", ToolStatus.BLOCKED)
+        with self.assertRaises(ValueError):
+            ToolResult("echo", ToolStatus.BLOCKED, reason_code="DENIED", error_type="ValueError")
+
+    def test_tool_result_detaches_nested_output(self) -> None:
+        output = {"nested": {"value": 1}}
+        result = self.registry.invoke("echo", {"text": "hello"})
+        self.registry.register(Tool("nested", lambda args: output))
+        nested = self.registry.invoke("nested", {})
+        output["nested"]["value"] = 9
+        self.assertEqual(nested.output["nested"]["value"], 1)
 
     def test_capability_check(self) -> None:
         self.registry.register(
