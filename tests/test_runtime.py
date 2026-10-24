@@ -73,7 +73,15 @@ class RunContextSnapshotTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             context._input["new"] = 2
         with self.assertRaises(TypeError):
+            context._input["nested"]["value"] = 2
+        with self.assertRaises(TypeError):
             context._outputs["new"] = {"value": 2}
+
+    def test_nested_readonly_input_is_returned_as_detached_json(self) -> None:
+        context = RunContext(run_id="r1", _input={"items": [1, {"value": 2}]})
+        snapshot = context.input
+        snapshot["items"][1]["value"] = 9
+        self.assertEqual(context.input["items"][1]["value"], 2)
 
     def test_non_finite_input_is_rejected_on_read(self) -> None:
         context = RunContext(run_id="r1", _input={"x": float("nan")})

@@ -4,7 +4,7 @@
 
 ## Baseline
 
-- 实际测试基线：152 passed（生命周期时间格式和事件 schema 形状加固后）
+- 实际测试基线：153 passed（RunContext 递归只读封装加固后）
 - 执行模型：同步、单进程、节点顺序执行
 - 现有 `RunStore`：保存完成后的 `RunResult`
 - 现有 `CheckpointStore`：保存节点边界快照，显式 `Runtime.resume()`
@@ -23,7 +23,7 @@
 
 ## Latest Verification
 
-最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 152 passed。
+最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 153 passed。
 
 ## Known Limits
 
@@ -60,6 +60,7 @@
 - 生命周期事件重放校验 event_id 非空且全序列唯一。
 - 生命周期事件重放校验 occurred_at 非空。
 - RunStore 在同一进程内串行化写入，避免线程间同时写入记录。
+- RunContext 内部输入快照递归只读，公开属性仍返回脱离内部状态的 JSON 副本。
 - 生命周期事件 occurred_at 必须是可解析的 ISO-8601 时间。
 - 生命周期事件日志写入 schema_version=1，并有落盘形状测试。
 
@@ -89,4 +90,5 @@
 - [x] 生命周期事件 event_id 唯一性校验已覆盖。
 - [x] 生命周期事件 occurred_at 和 RunStore 进程内并发写入校验已覆盖。
 - [x] 生命周期事件时间格式和事件日志 schema 形状已覆盖。
+- [x] RunContext 嵌套输入递归只读和快照隔离已覆盖。
 - 当前工作区已提交；未跟踪的 `agent_runtime_document_pack/` 按约定保持不变。

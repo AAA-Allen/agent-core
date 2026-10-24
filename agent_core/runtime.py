@@ -75,15 +75,13 @@ class RunContext:
     _output_store: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        input_snapshot = dict(self._input)
-        output_snapshot = dict(self._outputs)
-        self._output_store = output_snapshot
-        self._input = MappingProxyType(input_snapshot)
-        self._outputs = MappingProxyType(output_snapshot)
+        self._output_store = dict(self._outputs)
+        self._input = _readonly_value(self._input)
+        self._outputs = _readonly_value(self._outputs)
 
     @property
     def input(self) -> Mapping[str, Any]:
-        return _json_snapshot(self._input)
+        return _json_snapshot(_thaw_value(self._input))
 
     @property
     def outputs(self) -> Mapping[str, Mapping[str, Any]]:
@@ -202,6 +200,22 @@ def _json_snapshot(value: Mapping[str, Any]) -> dict[str, Any]:
     """Detach step data and reject non-finite or non-JSON workflow payloads."""
     _validate_json_keys(value)
     return json.loads(json.dumps(dict(value), ensure_ascii=False, allow_nan=False))
+
+
+def _readonly_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _readonly_value(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_readonly_value(item) for item in value)
+    return value
+
+
+def _thaw_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_value(item) for item in value]
+    return value
 
 
 def _validate_json_keys(value: Any) -> None:
