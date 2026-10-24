@@ -312,6 +312,7 @@ class Runtime:
             raise TypeError("store must implement save and load")
         self._store = store
         self._lifecycles: dict[str, "RunLifecycle"] = {}
+        self._lifecycle_lock = threading.RLock()
         self._active_runs: set[str] = set()
         self._cancel_requests: set[str] = set()
         self._cancel_lock = threading.Lock()
@@ -362,18 +363,20 @@ class Runtime:
             raise ValueError("checkpoint next_node does not exist in graph")
         self._claim_active(checkpoint.run_id)
         try:
-            lifecycle = self._lifecycles.get(checkpoint.run_id)
+            with self._lifecycle_lock:
+                lifecycle = self._lifecycles.get(checkpoint.run_id)
             if lifecycle is None:
                 lifecycle = self._load_persisted_lifecycle(checkpoint.run_id)
                 if lifecycle is None:
                     lifecycle = self._begin_lifecycle(checkpoint.run_id)
                 else:
-                    self._lifecycles[checkpoint.run_id] = lifecycle
-                    if lifecycle.status.value == "RUNNING":
-                        lifecycle.recover()
-                    else:
-                        lifecycle.resume()
-                    self._persist_lifecycle(lifecycle)
+                    with self._lifecycle_lock:
+                        self._lifecycles[checkpoint.run_id] = lifecycle
+                if lifecycle.status.value == "RUNNING":
+                    lifecycle.recover()
+                else:
+                    lifecycle.resume()
+                self._persist_lifecycle(lifecycle)
             else:
                 if lifecycle.status.value == "RUNNING":
                     lifecycle.recover()
@@ -413,7 +416,8 @@ class Runtime:
         from .lifecycle import LifecycleStatus
 
         _validate_run_id(run_id)
-        lifecycle = self._lifecycles.get(run_id)
+        with self._lifecycle_lock:
+            lifecycle = self._lifecycles.get(run_id)
         if lifecycle is not None:
             return lifecycle.status
         if self._store is not None:
@@ -432,7 +436,8 @@ class Runtime:
     def get_lifecycle_events(self, run_id: str) -> tuple["LifecycleEvent", ...]:
         """Return lifecycle events for a known run in sequence order."""
         _validate_run_id(run_id)
-        lifecycle = self._lifecycles.get(run_id)
+        with self._lifecycle_lock:
+            lifecycle = self._lifecycles.get(run_id)
         if lifecycle is not None:
             return lifecycle.events
         if self._store is not None:
@@ -460,7 +465,8 @@ class Runtime:
     def cancel(self, run_id: str) -> bool:
         """Request cooperative cancellation; return whether it was accepted."""
         _validate_run_id(run_id)
-        lifecycle = self._lifecycles.get(run_id)
+        with self._lifecycle_lock:
+            lifecycle = self._lifecycles.get(run_id)
         if lifecycle is None or lifecycle.terminal:
             return False
         with self._cancel_lock:
@@ -492,8 +498,9 @@ class Runtime:
         from .lifecycle import RunLifecycle, LifecycleStatus
 
         _validate_run_id(run_id)
-        if run_id in self._lifecycles:
-            raise ValueError("run_id already has a lifecycle")
+        with self._lifecycle_lock:
+            if run_id in self._lifecycles:
+                raise ValueError("run_id already has a lifecycle")
         existing = self._load_persisted_lifecycle(run_id)
         if existing is not None:
             raise ValueError("run_id already has a persisted lifecycle")
@@ -501,11 +508,13 @@ class Runtime:
             raise ValueError("run_id already has a persisted result")
         lifecycle = RunLifecycle(run_id)
         lifecycle.transition(LifecycleStatus.RUNNING)
-        self._lifecycles[run_id] = lifecycle
+        with self._lifecycle_lock:
+            self._lifecycles[run_id] = lifecycle
         try:
             self._persist_lifecycle(lifecycle)
         except Exception:
-            self._lifecycles.pop(run_id, None)
+            with self._lifecycle_lock:
+                self._lifecycles.pop(run_id, None)
             raise
         return lifecycle
 

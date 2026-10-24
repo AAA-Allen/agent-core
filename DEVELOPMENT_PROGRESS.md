@@ -72,6 +72,7 @@
 - RunStore 读写、FileCheckpointStore 读删和 ToolRegistry 注册/查找均有进程内并发边界保护。
 - ToolResult 固化 COMPLETED/BLOCKED/FAILED 三态原因码和 error_type 规则，并隔离嵌套 output。
 - Runtime 在生命周期初始化前占用活动 run_id，阻止同一 run_id 的并发启动竞态。
+- Runtime 生命周期缓存的初始化、查询和取消访问通过独立 RLock 串行化，持久化调用不在锁内执行。
 - 生命周期事件 occurred_at 必须是可解析的 ISO-8601 时间。
 - 生命周期事件日志写入 schema_version=1，并有落盘形状测试。
 
@@ -113,4 +114,5 @@
 - [x] 持久化读写和 ToolRegistry 并发访问边界已覆盖。
 - [x] ToolResult 三态字段语义和嵌套 output 隔离已覆盖。
 - [x] 同一 run_id 并发启动只允许一个 Runtime 执行实例。
+- [x] Runtime 生命周期缓存并发访问边界已覆盖。
 - 当前工作区已提交；未跟踪的 `agent_runtime_document_pack/` 按约定保持不变。
