@@ -319,8 +319,12 @@ class Runtime:
     def run(self, graph: Any, input: Mapping[str, Any], *, run_id: str | None = None) -> RunResult:
         """Execute a compiled graph synchronously until a terminal result."""
         identity = uuid4().hex if run_id is None else run_id
-        lifecycle = self._begin_lifecycle(identity)
         self._claim_active(identity)
+        try:
+            lifecycle = self._begin_lifecycle(identity)
+        except Exception:
+            self._release_active(identity)
+            raise
         try:
             result = self._execute(graph, input, run_id=identity)
         except Exception:

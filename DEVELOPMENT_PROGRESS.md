@@ -4,7 +4,7 @@
 
 ## Baseline
 
-- 实际测试基线：169 passed（ToolResult 三态契约和输出隔离加固后）
+- 实际测试基线：170 passed（Runtime 同 run_id 并发启动竞态加固后）
 - 执行模型：同步、单进程、节点顺序执行
 - 现有 `RunStore`：保存完成后的 `RunResult`
 - 现有 `CheckpointStore`：保存节点边界快照，显式 `Runtime.resume()`
@@ -23,7 +23,7 @@
 
 ## Latest Verification
 
-最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 169 passed。
+最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 170 passed。
 
 ## Known Limits
 
@@ -71,6 +71,7 @@
 - 内存和文件 Checkpoint 存储复用单调性校验，并在进程内保护并发写入。
 - RunStore 读写、FileCheckpointStore 读删和 ToolRegistry 注册/查找均有进程内并发边界保护。
 - ToolResult 固化 COMPLETED/BLOCKED/FAILED 三态原因码和 error_type 规则，并隔离嵌套 output。
+- Runtime 在生命周期初始化前占用活动 run_id，阻止同一 run_id 的并发启动竞态。
 - 生命周期事件 occurred_at 必须是可解析的 ISO-8601 时间。
 - 生命周期事件日志写入 schema_version=1，并有落盘形状测试。
 
@@ -111,4 +112,5 @@
 - [x] Checkpoint 存储并发写入和单调性保护已覆盖。
 - [x] 持久化读写和 ToolRegistry 并发访问边界已覆盖。
 - [x] ToolResult 三态字段语义和嵌套 output 隔离已覆盖。
+- [x] 同一 run_id 并发启动只允许一个 Runtime 执行实例。
 - 当前工作区已提交；未跟踪的 `agent_runtime_document_pack/` 按约定保持不变。

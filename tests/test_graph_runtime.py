@@ -526,6 +526,39 @@ class GraphRuntimeTests(unittest.TestCase):
         worker.join(1)
         self.assertFalse(worker.is_alive())
 
+    def test_concurrent_run_for_same_run_id_allows_one_execution(self) -> None:
+        import threading
+
+        started = threading.Event()
+        release = threading.Event()
+        runtime = Runtime()
+        errors: list[Exception] = []
+
+        def slow(ctx):
+            started.set()
+            release.wait(1)
+            return NodeResult.success()
+
+        graph = Graph().add_node("slow", slow).set_entry("slow").compile()
+
+        def execute() -> None:
+            try:
+                runtime.run(graph, {}, run_id="same-run")
+            except Exception as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=execute)
+        second = threading.Thread(target=execute)
+        first.start()
+        self.assertTrue(started.wait(1))
+        second.start()
+        second.join(1)
+        self.assertEqual(len(errors), 1)
+        self.assertRegex(str(errors[0]), "already executing")
+        release.set()
+        first.join(1)
+        self.assertFalse(first.is_alive())
+
     def test_resume_rejects_incompatible_or_terminal_checkpoint(self) -> None:
         from agent_core import Checkpoint
 
