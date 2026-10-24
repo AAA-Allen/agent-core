@@ -83,6 +83,25 @@ class RunContextSnapshotTests(unittest.TestCase):
         snapshot["items"][1]["value"] = 9
         self.assertEqual(context.input["items"][1]["value"], 2)
 
+
+class RunResultContractTests(unittest.TestCase):
+    def test_result_detaches_outputs_and_state(self) -> None:
+        outputs = {"step": {"value": 1}}
+        state = {"value": 2}
+        result = RunResult("result-1", RunStatus.COMPLETED, outputs, (), state=state)
+        outputs["step"]["value"] = 9
+        state["value"] = 9
+        self.assertEqual(result.outputs["step"]["value"], 1)
+        self.assertEqual(result.state["value"], 2)
+
+    def test_result_rejects_invalid_contract_fields(self) -> None:
+        with self.assertRaises(TypeError):
+            RunResult("result-1", "COMPLETED", {}, ())
+        with self.assertRaises(TypeError):
+            RunResult("result-1", RunStatus.COMPLETED, [], ())
+        with self.assertRaises(TypeError):
+            RunResult("result-1", RunStatus.COMPLETED, {}, (), simulated=1)
+
     def test_non_finite_input_is_rejected_on_read(self) -> None:
         context = RunContext(run_id="r1", _input={"x": float("nan")})
         with self.assertRaises(ValueError):

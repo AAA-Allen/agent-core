@@ -125,8 +125,19 @@ class RunResult:
     lifecycle_events: tuple[Any, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.state is None:
-            object.__setattr__(self, "state", self.outputs)
+        _validate_run_id(self.run_id)
+        if not isinstance(self.status, RunStatus):
+            raise TypeError("status must be a RunStatus")
+        if not isinstance(self.outputs, Mapping):
+            raise TypeError("outputs must be a mapping")
+        if self.state is not None and not isinstance(self.state, Mapping):
+            raise TypeError("state must be a mapping when provided")
+        if not isinstance(self.simulated, bool):
+            raise TypeError("simulated must be a bool")
+        object.__setattr__(self, "outputs", _json_snapshot(self.outputs))
+        object.__setattr__(self, "state", _json_snapshot(self.outputs if self.state is None else self.state))
+        object.__setattr__(self, "trace", tuple(self.trace))
+        object.__setattr__(self, "lifecycle_events", tuple(self.lifecycle_events))
 
 
 class WorkflowRunner:
