@@ -349,6 +349,25 @@ class GraphRuntimePersistenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid run record"):
             self.store.load("status-mismatch")
 
+    def test_run_store_rejects_result_status_mismatch_on_save(self) -> None:
+        from agent_core import LifecycleEvent, LifecycleStatus
+        from datetime import datetime, timezone
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        result = RunResult(
+            "status-mismatch-save", RunStatus.FAILED, {}, (),
+            lifecycle_events=(
+                LifecycleEvent("status-mismatch-save", 1, "e1", "run.created", None,
+                               LifecycleStatus.PENDING, timestamp),
+                LifecycleEvent("status-mismatch-save", 2, "e2", "run.running",
+                               LifecycleStatus.PENDING, LifecycleStatus.RUNNING, timestamp),
+                LifecycleEvent("status-mismatch-save", 3, "e3", "run.completed",
+                               LifecycleStatus.RUNNING, LifecycleStatus.COMPLETED, timestamp),
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "run status does not match"):
+            self.store.save(result)
+
 
 if __name__ == "__main__":
     unittest.main()

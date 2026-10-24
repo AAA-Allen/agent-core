@@ -31,6 +31,12 @@ class RunStore:
         """Write one run record atomically; an existing run_id is overwritten."""
         self._directory.mkdir(parents=True, exist_ok=True)
         _validate_run_id(result.run_id)
+        if result.lifecycle_events:
+            lifecycle = RunLifecycle.from_events(tuple(result.lifecycle_events))
+            if lifecycle.run_id != result.run_id:
+                raise ValueError("lifecycle run_id does not match run result")
+            if lifecycle.status.value != result.status.value:
+                raise ValueError("run status does not match lifecycle event history")
         target = self._directory / f"{result.run_id}.json"
         tmp = self._directory / f".{result.run_id}.{uuid4().hex}.json.tmp"
         payload = json.dumps(
