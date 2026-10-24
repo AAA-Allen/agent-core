@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
 from .results import NodeResult
-from .runtime import _json_snapshot
+from .runtime import _json_snapshot, _readonly_value, _thaw_value, _validate_run_id
 
 
 NodeCallable = Callable[["NodeContext"], NodeResult]
@@ -25,8 +25,17 @@ class NodeContext:
     _cancel_requested: Callable[[], bool] | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_input", _freeze_value(self._input))
-        object.__setattr__(self, "_state", _freeze_value(self._state))
+        _validate_run_id(self.run_id)
+        for value, name in ((self.node_id, "node_id"), (self.execution_id, "execution_id")):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a nonempty string")
+        if not isinstance(self.state_version, int) or isinstance(self.state_version, bool) \
+                or self.state_version < 0:
+            raise ValueError("state_version must be a nonnegative integer")
+        if self._cancel_requested is not None and not callable(self._cancel_requested):
+            raise TypeError("cancel_requested must be callable when provided")
+        object.__setattr__(self, "_input", _readonly_value(self._input))
+        object.__setattr__(self, "_state", _readonly_value(self._state))
 
     @property
     def input(self) -> Mapping[str, Any]:
@@ -139,19 +148,3 @@ def _validate_identifier(value: str, label: str) -> None:
 def _readonly_snapshot(value: Mapping[str, Any]) -> Mapping[str, Any]:
     snapshot = _json_snapshot(_thaw_value(value))
     return MappingProxyType(snapshot)
-
-
-def _freeze_value(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
-    if isinstance(value, (list, tuple)):
-        return tuple(_freeze_value(item) for item in value)
-    return value
-
-
-def _thaw_value(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {key: _thaw_value(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw_value(item) for item in value]
-    return value

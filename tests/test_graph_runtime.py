@@ -245,6 +245,18 @@ class GraphRuntimeTests(unittest.TestCase):
         snapshot["items"][0]["value"] = 9
         self.assertEqual(context.state["items"][0]["value"], 2)
 
+    def test_node_context_rejects_invalid_identity_and_state_version(self) -> None:
+        from agent_core import NodeContext
+
+        with self.assertRaises(ValueError):
+            NodeContext("../bad", "node", "execution", 0, {}, {})
+        with self.assertRaises(ValueError):
+            NodeContext("run", "", "execution", 0, {}, {})
+        with self.assertRaises(ValueError):
+            NodeContext("run", "node", "execution", -1, {}, {})
+        with self.assertRaises(TypeError):
+            NodeContext("run", "node", "execution", 0, {}, {}, _cancel_requested=True)
+
     def test_cancel_request_stops_before_next_node(self) -> None:
         calls: list[str] = []
         runtime = Runtime()
