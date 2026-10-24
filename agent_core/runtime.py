@@ -8,6 +8,7 @@ is required by the core.
 from __future__ import annotations
 
 import json
+import math
 import re
 import threading
 from dataclasses import dataclass, field, replace
@@ -110,6 +111,30 @@ class TraceEvent:
     execution_id: str | None = None
     state_version: int = 0
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_run_id(self.run_id)
+        if not isinstance(self.step, str):
+            raise TypeError("step must be a string")
+        if not isinstance(self.started_at, str) or not self.started_at.strip():
+            raise ValueError("started_at must be a nonempty string")
+        if not self.step.strip() and not (
+            isinstance(self.event_type, str) and self.event_type.startswith("run.")
+        ):
+            raise ValueError("step must be nonempty for node events")
+        if not isinstance(self.duration_ms, (int, float)) or isinstance(self.duration_ms, bool) \
+                or not math.isfinite(self.duration_ms) or self.duration_ms < 0:
+            raise ValueError("duration_ms must be nonnegative and finite")
+        if not isinstance(self.state_version, int) or isinstance(self.state_version, bool) \
+                or self.state_version < 0:
+            raise ValueError("state_version must be a nonnegative integer")
+        if self.reason_code is not None and (
+            not isinstance(self.reason_code, str) or not self.reason_code.strip()
+        ):
+            raise ValueError("reason_code must be a nonempty string when provided")
+        if not isinstance(self.metadata, Mapping):
+            raise TypeError("metadata must be a mapping")
+        object.__setattr__(self, "metadata", _json_snapshot(self.metadata))
 
 
 @dataclass(frozen=True)

@@ -102,6 +102,26 @@ class RunResultContractTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             RunResult("result-1", RunStatus.COMPLETED, {}, (), simulated=1)
 
+
+class TraceEventContractTests(unittest.TestCase):
+    def test_trace_event_detaches_metadata(self) -> None:
+        metadata = {"nested": {"value": 1}}
+        event = TraceEvent("trace-1", "step", "COMPLETED", "now", 1.0, metadata=metadata)
+        metadata["nested"]["value"] = 9
+        self.assertEqual(event.metadata["nested"]["value"], 1)
+
+    def test_trace_event_rejects_invalid_duration_version_and_metadata(self) -> None:
+        with self.assertRaises(ValueError):
+            TraceEvent("trace-1", "step", "COMPLETED", "now", -1)
+        with self.assertRaises(ValueError):
+            TraceEvent("trace-1", "step", "COMPLETED", "now", 1, state_version=-1)
+        with self.assertRaises(TypeError):
+            TraceEvent("trace-1", "step", "COMPLETED", "now", 1, metadata=[])
+        with self.assertRaises(ValueError):
+            TraceEvent("trace-1", "step", "COMPLETED", "", 1)
+        with self.assertRaises(ValueError):
+            TraceEvent("trace-1", "step", "COMPLETED", "now", 1, reason_code=" ")
+
     def test_non_finite_input_is_rejected_on_read(self) -> None:
         context = RunContext(run_id="r1", _input={"x": float("nan")})
         with self.assertRaises(ValueError):
