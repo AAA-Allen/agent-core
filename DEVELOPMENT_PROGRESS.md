@@ -4,7 +4,7 @@
 
 ## Baseline
 
-- 实际测试基线：145 passed（RunContext 只读边界加固后）
+- 实际测试基线：146 passed（RunStore 记录结构校验加固后）
 - 执行模型：同步、单进程、节点顺序执行
 - 现有 `RunStore`：保存完成后的 `RunResult`
 - 现有 `CheckpointStore`：保存节点边界快照，显式 `Runtime.resume()`
@@ -23,7 +23,7 @@
 
 ## Latest Verification
 
-最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 145 passed。
+最近验证：`python -m unittest discover -s tests -q` 和禁用外部插件的 `pytest -q` 均为 146 passed。
 
 ## Known Limits
 
@@ -52,6 +52,7 @@
 - WorkflowRunner 仅提交 COMPLETED 步骤的输出；BLOCKED/FAILED 输出不进入最终 outputs。
 - RunStore 结果和生命周期日志写入 schema_version=1；读取兼容缺失版本的旧记录并拒绝未知版本。
 - RunContext 的顶层输入和输出快照不可直接修改，WorkflowRunner 通过内部提交入口更新已完成输出。
+- RunStore 读取时校验结果 ID、outputs/state 映射类型和 Trace 的 run_id 归属。
 
 ## Acceptance
 
@@ -71,4 +72,5 @@
 - [x] WorkflowRunner 阻断和失败输出语义已固化并有回归测试。
 - [x] RunStore 结果和生命周期日志 schema 版本校验已覆盖。
 - [x] RunContext 顶层只读边界和延迟 JSON 校验行为已覆盖。
+- [x] RunStore 损坏结果结构和 Trace 归属校验已覆盖。
 - 当前改动尚未提交，等待人工审查后再决定提交边界。

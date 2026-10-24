@@ -96,6 +96,25 @@ class RunStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid run record"):
             self.store.load("unknown-schema")
 
+    def test_run_store_rejects_invalid_result_shapes(self) -> None:
+        outputs_path = self.store.directory / "bad-outputs.json"
+        outputs_path.write_text(
+            '{"run_id":"bad-outputs","status":"COMPLETED",'
+            '"outputs":[],"trace":[]}', encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "invalid run record"):
+            self.store.load("bad-outputs")
+
+        trace_path = self.store.directory / "bad-trace-owner.json"
+        trace_path.write_text(
+            '{"run_id":"bad-trace-owner","status":"COMPLETED",'
+            '"outputs":{},"trace":[{"run_id":"other","step":"s",'
+            '"status":"COMPLETED","started_at":"2026-10-24T00:00:00+00:00",'
+            '"duration_ms":1.0}]}', encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "invalid run record"):
+            self.store.load("bad-trace-owner")
+
     def test_list_runs_sorted(self) -> None:
         self.store.save(_sample_result("run-b"))
         self.store.save(_sample_result("run-a"))

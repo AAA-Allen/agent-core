@@ -145,6 +145,11 @@ def _dict_to_result(payload: dict) -> RunResult:
     required = {"run_id", "status", "outputs", "trace"}
     if not required <= payload.keys():
         raise KeyError("missing run record field")
+    _validate_run_id(payload["run_id"])
+    if not isinstance(payload["outputs"], dict):
+        raise TypeError("outputs must be an object")
+    if "state" in payload and not isinstance(payload["state"], dict):
+        raise TypeError("state must be an object")
     if not isinstance(payload["trace"], list):
         raise TypeError("trace must be a list")
     trace = tuple(
@@ -166,6 +171,8 @@ def _dict_to_result(payload: dict) -> RunResult:
         )
         for event in payload["trace"]
     )
+    if any(event.run_id != payload["run_id"] for event in trace):
+        raise ValueError("trace run_id does not match run record")
     lifecycle_events = tuple(
         _dict_to_lifecycle_event(event) for event in payload.get("lifecycle_events", [])
     )
