@@ -274,6 +274,8 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                     self._handle_run_status(run_id)
                 elif suffix == "/events":
                     self._handle_run_events(run_id)
+                elif suffix == "/events/stream":
+                    self._handle_run_events_stream(run_id)
                 else:
                     raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"unknown path: {path}")
             else:
@@ -423,6 +425,67 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_RUN_ID", str(exc))
         self._send_json(HTTPStatus.OK, {"run_id": run_id, "accepted": accepted})
+
+    _SSE_POLL_SECONDS = 0.15
+    _SSE_HEARTBEAT_SECONDS = 15.0
+    _SSE_MAX_SECONDS = 900.0
+
+    def _handle_run_events_stream(self, run_id: str) -> None:
+        """Push lifecycle events over Server-Sent Events until a terminal status.
+
+        The stream starts with events already persisted (replaying them), then
+        follows the run in-process. It ends with an ``event: done`` frame that
+        carries the terminal status; clients keep the regular result endpoints
+        for the full RunResult.
+        """
+        import time as _time
+
+        try:
+            _validate_run_id(run_id)
+            status = self.runtime.get_status(run_id)
+            if status is None and run_id not in self.server.active_run_ids():  # type: ignore[attr-defined]
+                raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_RUN", f"unknown run: {run_id}")
+        except ValueError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_RUN_ID", str(exc))
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        def send(event_name: str, payload: Mapping[str, Any]) -> None:
+            body = json.dumps(payload, ensure_ascii=False, allow_nan=False)
+            self.wfile.write(f"event: {event_name}\ndata: {body}\n\n".encode("utf-8"))
+            self.wfile.flush()
+
+        sent = 0
+        started = _time.monotonic()
+        last_heartbeat = started
+        try:
+            while True:
+                events = self.runtime.get_lifecycle_events(run_id)
+                for event in events[sent:]:
+                    send("lifecycle", _lifecycle_event_to_dict(event))
+                    sent += 1
+                status = self.runtime.get_status(run_id)
+                if status is not None and status.terminal:
+                    send("done", {"run_id": run_id, "status": status.value})
+                    return
+                now = _time.monotonic()
+                if now - last_heartbeat >= self._SSE_HEARTBEAT_SECONDS:
+                    self.wfile.write(b": heartbeat\n\n")
+                    self.wfile.flush()
+                    last_heartbeat = now
+                if now - started >= self._SSE_MAX_SECONDS:
+                    send("done", {"run_id": run_id, "status": "STREAM_TIMEOUT"})
+                    return
+                if status is None and run_id not in self.server.active_run_ids():  # type: ignore[attr-defined]
+                    send("done", {"run_id": run_id, "status": "UNKNOWN"})
+                    return
+                _time.sleep(self._SSE_POLL_SECONDS)
+        except (ConnectionError, BrokenPipeError, OSError):
+            return
 
     # -- static files ----------------------------------------------------
     def _serve_static(self, path: str) -> None:

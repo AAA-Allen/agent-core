@@ -282,6 +282,62 @@ class ServerLifecycleTests(ServerTestBase):
             release.set()
         self.assertEqual(self._poll_until_terminal("async-conflict"), "COMPLETED")
 
+    def test_events_stream_pushes_lifecycle_and_done(self) -> None:
+        release = self._register_slow_agent()
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "slow-agent", "input": {}, "run_id": "sse-run", "wait": False},
+        )
+        self.assertEqual(status, 202)
+
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=15)
+        try:
+            connection.request("GET", "/api/runs/sse-run/events/stream")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertTrue(response.getheader("Content-Type", "").startswith("text/event-stream"))
+
+            frames: list[dict[str, str]] = []
+            current: dict[str, str] = {}
+            released = False
+            while True:
+                raw = response.readline()
+                if not raw:
+                    break
+                line = raw.decode("utf-8").rstrip("\r\n")
+                if not line:
+                    if current:
+                        frames.append(current)
+                        current = {}
+                    if frames and frames[-1]["event"] == "done":
+                        break
+                    continue
+                if line.startswith(":"):
+                    continue
+                key, _, value = line.partition(": ")
+                current[key] = value
+                if key == "data" and current.get("event") == "lifecycle":
+                    data = json.loads(value)
+                    if data.get("to_status") == "RUNNING" and not released:
+                        release.set()
+                        released = True
+        finally:
+            release.set()
+            connection.close()
+
+        self.assertTrue(released)
+        done_frames = [frame for frame in frames if frame["event"] == "done"]
+        self.assertTrue(done_frames)
+        self.assertEqual(json.loads(done_frames[-1]["data"])["status"], "COMPLETED")
+        lifecycle = [json.loads(frame["data"]) for frame in frames if frame["event"] == "lifecycle"]
+        event_types = [event["event_type"] for event in lifecycle]
+        self.assertIn("run.created", event_types)
+        self.assertIn("run.running", event_types)
+
+    def test_events_stream_unknown_run_returns_json_error(self) -> None:
+        status, body = self.request("GET", "/api/runs/missing-run/events/stream")
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"]["code"], "UNKNOWN_RUN")
+
     def test_async_run_cooperative_cancel(self) -> None:
         import time
 

@@ -225,38 +225,54 @@ function completeLiveTask(task, run) {
   if (state.activeId === task.id) { selectTask(task.id); } else { renderHistory(); }
 }
 
-async function pollLiveTask(task) {
-  let unknownStreak = 0;
-  const deadline = Date.now() + 10 * 60 * 1000;
-  while (Date.now() < deadline) {
-    await sleep(600);
-    try {
-      const status = await apiFetch(`/api/runs/${task.id}/status`, {}, 4000);
-      unknownStreak = 0;
-      if (TERMINAL_STATUSES.includes(status.status)) break;
-      const payload = await apiFetch(`/api/runs/${task.id}/events`, {}, 4000);
-      task.lifecycle = payload.events;
-      if (state.activeId === task.id) renderTaskView(task);
-    } catch (error) {
-      if (error.code === 'UNKNOWN_RUN') {
-        unknownStreak += 1;
-        if (unknownStreak > 15 && Date.now() - new Date(task.receivedAt).getTime() > 30000) {
-          failTask(task, '服务端没有这条运行的记录，可能已被重启清除。');
-          return;
+function watchLiveTask(task) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let watchdog = null;
+    const finish = (status) => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(watchdog);
+      try { source.close(); } catch { /* already closed */ }
+      resolve(status);
+    };
+    const source = new EventSource(`/api/runs/${task.id}/events/stream`);
+    source.addEventListener('lifecycle', (event) => {
+      try {
+        const item = JSON.parse(event.data);
+        if (!task.lifecycle.some((entry) => entry.event_id === item.event_id)) {
+          task.lifecycle.push(item);
+          if (state.activeId === task.id) renderTaskView(task);
         }
-      } else if (error.code === 'TIMEOUT' || error.name === 'TypeError') {
-        failTask(task, `与 Runtime 服务的连接中断：${error.message}`);
-        markOffline();
-        return;
+      } catch { /* malformed frame */ }
+    });
+    source.addEventListener('done', (event) => {
+      let status = 'UNKNOWN';
+      try { status = JSON.parse(event.data).status; } catch { /* malformed frame */ }
+      finish(status);
+    });
+    source.onerror = () => { /* EventSource 自带重连;断连由看门狗兜底 */ };
+    watchdog = window.setInterval(async () => {
+      try {
+        const status = await apiFetch(`/api/runs/${task.id}/status`, {}, 3000);
+        if (TERMINAL_STATUSES.includes(status.status)) finish(status.status);
+      } catch (error) {
+        if (error.code === 'TIMEOUT' || error.name === 'TypeError') { markOffline(); finish('CONNECTION_LOST'); }
       }
-    }
-  }
+    }, 2000);
+  });
+}
+
+async function pollLiveTask(task) {
+  const status = await watchLiveTask(task);
   if (task.status !== 'running') return;
+  if (status === 'CONNECTION_LOST') { failTask(task, '与 Runtime 服务的连接中断。'); return; }
   try {
     const payload = await apiFetch(`/api/runs/${task.id}`, {}, 8000);
     completeLiveTask(task, payload.run);
   } catch (error) {
-    failTask(task, `获取运行结果失败：${error.message}`);
+    if (error.code === 'UNKNOWN_RUN') failTask(task, '服务端没有这条运行的记录，可能已被重启清除。');
+    else failTask(task, `获取运行结果失败：${error.message}`);
   }
 }
 
