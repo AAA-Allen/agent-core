@@ -103,7 +103,12 @@ class ToolRegistry:
         try:
             output = tool.invoke(safe_arguments)
         except Exception as exc:
-            return ToolResult(name, ToolStatus.FAILED, reason_code="TOOL_EXCEPTION", error_type=type(exc).__name__)
+            reason = getattr(exc, "reason_code", None)
+            if isinstance(reason, str) and reason.strip():
+                return ToolResult(name, ToolStatus.FAILED, reason_code=reason,
+                                  error_type=type(exc).__name__)
+            return ToolResult(name, ToolStatus.FAILED, reason_code="TOOL_EXCEPTION",
+                              error_type=type(exc).__name__)
         if not isinstance(output, Mapping):
             return ToolResult(name, ToolStatus.FAILED, reason_code="INVALID_TOOL_OUTPUT")
         try:

@@ -269,3 +269,17 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 257 passed。
+
+## Session 2026-10-25(续八):CXR-MARS 领域模型接入(工具边界)
+
+### 已完成
+
+- [x] 判定:CXR-MARS(胸片多标签分类,图像进/概率出)是**工具**而非 ModelAdapter——对话形状契约不适配视觉模型;接入位置为 Tool 边界。agent-core 正是 CXR-MARS `docs/19` S2/S3 未做的编排层。
+- [x] 声明式 `tool` 节点新增 `capabilities` 参数:配置显式声明授予的能力(frozenset 透传 `granted_capabilities`);未声明调用受限工具 → BLOCKED `CAPABILITY_DENIED`,能力绝不隐式授予。
+- [x] Tool 边界原因码透传:工具抛出携带合法 `reason_code` 属性的异常时原样上报(领域失败不被 `TOOL_EXCEPTION` 抹平),与 ModelAdapter/llm 节点契约一致;空白原因码回退 TOOL_EXCEPTION。
+- [x] `examples/cxr_bridge.py`:`build_cxr_tools()` 桥接 CXR-MARS `POST /api/predict`(纯标准库 multipart 上传),整理输出(阳性标签/逐类概率/塌陷余量/延迟);`cxr-reviewer` 审阅 Agent 配置(校验→委派→汇总);`main()` 一键起完整服务。
+- [x] 假 CXR 服务测试 4 项(multipart 解析/塌陷门控 422 透传为 `CXR_SERVICE_REJECTED`/能力拒绝且不触服务/缺图 `IMAGE_NOT_FOUND`),全部不依赖真实模型。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 264 passed。

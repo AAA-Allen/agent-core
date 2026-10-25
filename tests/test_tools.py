@@ -84,6 +84,29 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(result.reason_code, "TOOL_EXCEPTION")
         self.assertEqual(result.error_type, "ZeroDivisionError")
 
+    def test_exception_reason_code_is_honored(self) -> None:
+        class DomainError(Exception):
+            reason_code = "IMAGE_NOT_FOUND"
+
+        def raise_domain(args):
+            raise DomainError("file missing")
+
+        self.registry.register(Tool("guarded", raise_domain))
+        result = self.registry.invoke("guarded", {})
+        self.assertEqual(result.status.value, "FAILED")
+        self.assertEqual(result.reason_code, "IMAGE_NOT_FOUND")
+        self.assertEqual(result.error_type, "DomainError")
+
+        class BlankCode(Exception):
+            reason_code = "   "
+
+        def raise_blank(args):
+            raise BlankCode("whitespace code falls back")
+
+        self.registry.register(Tool("blank", raise_blank))
+        result = self.registry.invoke("blank", {})
+        self.assertEqual(result.reason_code, "TOOL_EXCEPTION")
+
     def test_non_mapping_output_is_failed(self) -> None:
         self.registry.register(Tool("bad", lambda args: [1, 2]))
         result = self.registry.invoke("bad", {})

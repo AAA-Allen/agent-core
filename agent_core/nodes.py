@@ -124,11 +124,23 @@ def template_node(params: Mapping[str, Any]) -> AgentNode:
 
 
 def tool_node(params: Mapping[str, Any]) -> AgentNode:
-    """Invoke a registered tool with literal or state-templated arguments."""
+    """Invoke a registered tool with literal or state-templated arguments.
+
+    ``capabilities`` declares the capability names this agent grants the
+    tool; a tool whose ``required_capabilities`` is not covered blocks with
+    ``CAPABILITY_DENIED`` — domain capabilities (e.g. medical inference)
+    must be declared explicitly, never granted implicitly.
+    """
     name = _require_str(params, "name")
     arguments = params.get("arguments", {})
     if not isinstance(arguments, Mapping):
         raise ValueError("node param 'arguments' must be a mapping")
+    capabilities = params.get("capabilities", [])
+    if not isinstance(capabilities, list) or any(
+        not isinstance(item, str) or not item.strip() for item in capabilities
+    ):
+        raise ValueError("node param 'capabilities' must be a list of nonempty strings")
+    granted = frozenset(capabilities)
     output_key = _require_str(params, "output_key", default=name)
     route = _require_route(params)
 
@@ -144,7 +156,7 @@ def tool_node(params: Mapping[str, Any]) -> AgentNode:
                     return NodeResult.failed("TOOL_ARGUMENT_MISSING")
             else:
                 resolved[key] = value
-        result = ctx.tools.invoke(name, resolved)
+        result = ctx.tools.invoke(name, resolved, granted_capabilities=granted)
         if result.status.value == "COMPLETED":
             return NodeResult.success({output_key: dict(result.output)}, route=route)
         if result.status.value == "BLOCKED":
