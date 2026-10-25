@@ -171,6 +171,29 @@ result = agent.run({"text": "hello"})
 
 Agent 节点收到的 `AgentNodeContext` 还包含 `model`、`tools`、`memory` 和 `cancel_requested`。`InMemoryMemory` 适合开发和测试；生产环境可实现 `MemoryStore` 接入自己的存储。`AgentResult.run` 保留底层 `RunResult`，因此不会丢失节点 Trace 或生命周期信息。`agent.describe()` 返回编译后的图拓扑（入口、节点、边），可用于 UI 展示和自省。
 
+## 模型接入
+
+`agent_core.models.OpenAICompatibleModel` 是内置的模型适配器,纯标准库实现,兼容所有 OpenAI 风格的 chat completions 端点(GLM、DeepSeek、OpenAI、vLLM、Ollama 等)。它每次调用恰好发一个 HTTP 请求、绝不重试;传输/协议失败抛 `ModelRequestError`(带稳定原因码,不含密钥或载荷)。
+
+配置通过三个环境变量(全部齐备才生效,半配置视为未配置):
+
+```bash
+export AGENT_MODEL_BASE_URL=https://open.bigmodel.cn/api/paas/v4   # 任意 OpenAI 兼容端点
+export AGENT_MODEL_API_KEY=your-key
+export AGENT_MODEL_NAME=glm-4
+agent-core-server --config examples/assistant_agent.json
+```
+
+声明式 `llm` 节点(配合 `examples/assistant_agent.json`):
+
+| 参数 | 说明 |
+|---|---|
+| `prompt` | `{state_key}` 模板渲染的用户提示 |
+| `system` | 可选系统提示模板 |
+| `into` | 回复写入的状态键(默认 `reply`) |
+
+fail-closed 语义:未绑定模型 → BLOCKED `MODEL_NOT_CONFIGURED`(不伪装);模板缺键 → FAILED `PROMPT_KEY_MISSING`;端点 HTTP 错误/超时/响应畸形 → FAILED 对应原因码。`GET /api/health` 如实报告 `model_configured`。适配器不解析提示词、不做 JSON mode 或函数调用;结构化输出应通过工具节点实现。
+
 ## 声明式 Agent 装配
 
 `agent_core/nodes.py` 提供确定性节点工厂库，让 Agent 可以用 JSON 配置组装而不必写 Python:

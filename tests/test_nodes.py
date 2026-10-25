@@ -241,6 +241,57 @@ class ConfigAssemblyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_agent_from_config(config, runtime=Runtime())
 
+    def test_llm_node_replies_and_fails_closed(self) -> None:
+        class FakeModel:
+            def __init__(self, error=None):
+                self.calls = []
+                self.error = error
+
+            def complete(self, messages, *, tools=None, context=None):
+                self.calls.append(messages)
+                if self.error:
+                    raise self.error
+                return {"content": f"回答:{messages[-1]['content']}"}
+
+        from agent_core.models import ModelRequestError
+
+        config = {
+            "name": "asker",
+            "entry": "ask",
+            "nodes": [
+                {"id": "ask", "type": "llm",
+                 "params": {"system": "简洁回答", "prompt": "问题:{q}", "into": "answer"}},
+            ],
+        }
+
+        # 未绑定模型 → BLOCKED,不触网
+        agent = build_agent_from_config(config, runtime=Runtime())
+        result = agent.run({"q": "你好"})
+        self.assertEqual(result.status, RunStatus.BLOCKED)
+        self.assertEqual(result.reason_code, "MODEL_NOT_CONFIGURED")
+
+        # 正常回复写进状态
+        model = FakeModel()
+        agent = build_agent_from_config(config, runtime=Runtime(), model=model)
+        result = agent.run({"q": "你好"})
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(result.state["answer"], "回答:问题:你好")
+        self.assertEqual(model.calls[0][0], {"role": "system", "content": "简洁回答"})
+
+        # 传输失败 → FAILED 带原因码
+        agent = build_agent_from_config(
+            config, runtime=Runtime(),
+            model=FakeModel(error=ModelRequestError("MODEL_HTTP_ERROR", "http 500")),
+        )
+        result = agent.run({"q": "你好"})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "MODEL_HTTP_ERROR")
+
+        # 模板缺键 → FAILED
+        result = build_agent_from_config(config, runtime=Runtime(), model=FakeModel()).run({})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "PROMPT_KEY_MISSING")
+
     def test_example_config_file_runs_end_to_end(self) -> None:
         config = json.loads(Path("examples/support_agent.json").read_text(encoding="utf-8"))
         agent = build_agent_from_config(config, runtime=self.runtime, tools=demo_tools())

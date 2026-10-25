@@ -310,6 +310,7 @@ def load_agents_from_config(
     *,
     runtime: Runtime,
     tools: Any = None,
+    model: Any = None,
     agent_resolver: Callable[[str, Any], Agent | None] | None = None,
 ) -> list[Agent]:
     """Build agents from a JSON config file (single config or ``agents`` list)."""
@@ -318,7 +319,8 @@ def load_agents_from_config(
         tools = _default_tools()
     return [
         build_agent_from_config(
-            config, runtime=runtime, tools=tools, agent_resolver=agent_resolver,
+            config, runtime=runtime, tools=tools, model=model,
+            agent_resolver=agent_resolver,
         )
         for config in configs
     ]
@@ -330,6 +332,7 @@ def register_agents_from_config(
     *,
     runtime: Runtime,
     tools: Any = None,
+    model: Any = None,
 ) -> list[str]:
     """Register config agents as factories so sessions can bind memory.
 
@@ -346,7 +349,7 @@ def register_agents_from_config(
             config["name"],
             lambda memory=None, config=config: build_agent_from_config(
                 config, runtime=runtime, tools=tools, memory=memory,
-                agent_resolver=resolver,
+                model=model, agent_resolver=resolver,
             ),
         )
     return [config["name"] for config in configs]
@@ -503,10 +506,13 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
 
     # -- API handlers ----------------------------------------------------
     def _handle_health(self) -> None:
+        model = self.server.model  # type: ignore[attr-defined]
         self._send_json(HTTPStatus.OK, {
             "status": "ok",
             "runtime": f"agent-core/{__version__}",
             "agents": self.registry.names(),
+            "model_configured": model is not None,
+            "model_name": getattr(model, "model", None),
         })
 
     def _handle_agents(self) -> None:
@@ -964,6 +970,7 @@ class AgentServer(ThreadingHTTPServer):
         store: RunStore,
         frontend_dir: Path | None,
         checkpoint_store: Any = None,
+        model: Any = None,
     ) -> None:
         super().__init__(address, RuntimeAPIHandler)
         self.runtime = runtime
@@ -971,6 +978,7 @@ class AgentServer(ThreadingHTTPServer):
         self.store = store
         self.frontend_dir = frontend_dir
         self.checkpoint_store = checkpoint_store
+        self.model = model
         self.sessions = SessionManager()
         self.run_index_path = store.directory / ".agent_index.json"
         self._active_runs: set[str] = set()
@@ -1030,6 +1038,7 @@ class AgentServer(ThreadingHTTPServer):
         key = str(path)
         agents = load_agents_from_config(
             path, runtime=self.runtime, agent_resolver=_agent_resolver(self.registry),
+            model=self.model,
         )
         new_names = [agent.spec.name for agent in agents]
         with self._config_lock:
@@ -1042,7 +1051,9 @@ class AgentServer(ThreadingHTTPServer):
             raise ValueError(f"cannot reload config owning other agents' names: {', '.join(foreign)}")
         for name in owned:
             self.registry.unregister(name)
-        registered = register_agents_from_config(path, self.registry, runtime=self.runtime)
+        registered = register_agents_from_config(
+            path, self.registry, runtime=self.runtime, model=self.model,
+        )
         with self._config_lock:
             self._config_names[key] = registered
         return registered
@@ -1096,8 +1107,17 @@ def create_server(
     frontend_dir: str | Path | None = None,
     runtime: Runtime | None = None,
     registry: AgentRegistry | None = None,
+    model: Any = None,
 ) -> AgentServer:
-    """Assemble a server with a shared Runtime, RunStore and agent registry."""
+    """Assemble a server with a shared Runtime, RunStore and agent registry.
+
+    ``model`` defaults to the ``AGENT_MODEL_*`` environment configuration; a
+    half-configured environment is treated as unconfigured.
+    """
+    from .models import model_from_environment
+
+    if model is None:
+        model = model_from_environment()
     store = RunStore(store_dir)
     if checkpoint_dir is None:
         checkpoint_dir = Path(store_dir).parent / "checkpoints"
@@ -1115,6 +1135,7 @@ def create_server(
         store=store,
         frontend_dir=Path(frontend_dir) if frontend_dir is not None else _default_frontend_dir(),
         checkpoint_store=checkpoint_store,
+        model=model,
     )
 
 

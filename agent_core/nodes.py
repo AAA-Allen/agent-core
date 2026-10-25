@@ -237,12 +237,56 @@ def subagent_node(params: Mapping[str, Any], *, resolver: Callable[[str, Any], A
     return execute
 
 
+def llm_node(params: Mapping[str, Any]) -> AgentNode:
+    """Ask the injected model a prompt rendered from state.
+
+    ``prompt`` and optional ``system`` are ``{state_key}`` templates. The
+    reply content is written to the state key named by ``into``. Fails
+    closed: no model bound → BLOCKED ``MODEL_NOT_CONFIGURED``; a transport
+    or protocol failure → FAILED with the adapter's reason code. Prompts and
+    replies are plain strings; structured output belongs in a tool node.
+    """
+    prompt = _require_str(params, "prompt")
+    into = _require_str(params, "into", default="reply")
+    system = params.get("system")
+    if system is not None and not isinstance(system, str):
+        raise ValueError("node param 'system' must be a string when provided")
+    route = _require_route(params)
+
+    def execute(ctx: AgentNodeContext) -> NodeResult:
+        if ctx.model is None:
+            return NodeResult.blocked("MODEL_NOT_CONFIGURED")
+        try:
+            rendered_prompt = _format_from_state(prompt, ctx.state)
+            rendered_system = _format_from_state(system, ctx.state) if system else None
+        except KeyError:
+            return NodeResult.failed("PROMPT_KEY_MISSING")
+        messages: list[dict[str, str]] = []
+        if rendered_system:
+            messages.append({"role": "system", "content": rendered_system})
+        messages.append({"role": "user", "content": rendered_prompt})
+        try:
+            reply = ctx.model.complete(messages)
+        except Exception as exc:
+            reason = getattr(exc, "reason_code", None)
+            if isinstance(reason, str) and reason.strip():
+                return NodeResult.failed(reason)
+            return NodeResult.failed("MODEL_REQUEST_FAILED")
+        content = reply.get("content") if isinstance(reply, Mapping) else None
+        if not isinstance(content, str):
+            return NodeResult.failed("MODEL_INVALID_REPLY")
+        return NodeResult.success({into: content}, route=route)
+
+    return execute
+
+
 NODE_FACTORIES: dict[str, AgentNodeFactory] = {
     "validate_input": validate_input_node,
     "split_steps": split_steps_node,
     "template": template_node,
     "tool": tool_node,
     "route_by_value": route_by_value_node,
+    "llm": llm_node,
 }
 
 
@@ -313,12 +357,15 @@ def build_agent_from_config(
     runtime: Any,
     tools: ToolRegistry | None = None,
     memory: Any = None,
+    model: Any = None,
     agent_resolver: Callable[[str, Any], Any] | None = None,
 ) -> Agent:
     """Assemble an :class:`Agent` from a validated declarative config.
 
     ``agent_resolver(name, memory)`` is required only when the config uses
     ``subagent`` nodes; it builds the delegate agent for each sub-run.
+    ``model`` is bound into the agent context for ``llm`` nodes and any
+    custom node that wants it.
     """
     _validate_config(config)
     builder = AgentBuilder(
@@ -328,6 +375,7 @@ def build_agent_from_config(
         metadata=config.get("metadata", {}),
         tools=tools,
         memory=memory,
+        model=model,
     )
     for node in config["nodes"]:
         if node["type"] == "subagent":

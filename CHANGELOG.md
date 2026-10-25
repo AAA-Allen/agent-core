@@ -2,6 +2,12 @@
 
 本项目遵循语义化版本。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### 新增
+
+- **模型接入**:`agent_core.models.OpenAICompatibleModel`——纯标准库实现的 OpenAI 兼容 chat completions 适配器(单请求、不重试、失败带稳定原因码且不泄露密钥/载荷);`AGENT_MODEL_*` 环境变量配置(半配置视为未配置);声明式 `llm` 节点(模板提示 + fail-closed:未配置 BLOCKED、传输失败 FAILED 带原因码);服务端模型注入与 `/api/health` 的 `model_configured` 报告;`examples/assistant_agent.json`;本地假端点契约测试(不触网)。
+
 ## [0.2.0] - 2026-10-25
 
 在 0.1.x 图运行时之上新增完整的 Agent 平台层。核心运行时语义不变,全部新增能力保持确定性、fail-closed 与可审计边界。

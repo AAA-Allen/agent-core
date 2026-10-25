@@ -682,6 +682,62 @@ class ServerConfigReloadTests(ServerTestBase):
         self.assertNotEqual(run["state"]["delegated"]["run_id"], run["run_id"])
         self.assertEqual(run["trace"][-1]["event_type"], "run.completed")
 
+    def test_assistant_agent_uses_injected_model(self) -> None:
+        from tests.test_models import FakeOpenAIServer
+
+        fake = FakeOpenAIServer(body="这是模型的真实回答。").start()
+        self.addCleanup(fake.stop)
+        from agent_core.models import OpenAICompatibleModel
+
+        model = OpenAICompatibleModel(fake.base_url, "test-key", "fake-model")
+        registered = register_agents_from_config(
+            "examples/assistant_agent.json", self.server.registry,
+            runtime=self.server.runtime, model=model,
+        )
+        self.assertEqual(registered, ["assistant"])
+
+        status, payload = self.request("GET", "/api/health")
+        self.assertEqual(status, 200)
+
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "assistant", "input": {"task": "什么是确定性运行时?"}},
+        )
+        self.assertEqual(status, 200)
+        run = payload["run"]
+        self.assertEqual(run["status"], "COMPLETED")
+        self.assertEqual(run["state"]["answer"], "这是模型的真实回答。")
+        self.assertEqual(run["state"]["summary"], "这是模型的真实回答。")
+        request = fake.requests[0]
+        self.assertIn("什么是确定性运行时?", request["payload"]["messages"][-1]["content"])
+
+    def test_assistant_agent_blocks_without_model(self) -> None:
+        register_agents_from_config(
+            "examples/assistant_agent.json", self.server.registry, runtime=self.server.runtime,
+        )
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "assistant", "input": {"task": "你好"}},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["run"]["status"], "BLOCKED")
+        self.assertEqual(payload["run"]["reason_code"], "MODEL_NOT_CONFIGURED")
+
+    def test_health_reports_model_configuration(self) -> None:
+        status, payload = self.request("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertIs(payload["model_configured"], False)
+        self.assertIsNone(payload["model_name"])
+
+        from agent_core.models import OpenAICompatibleModel
+        from agent_core.server import AgentRegistry
+
+        with_model = create_server(
+            port=0, store_dir=Path(self._tmp.name) / "runs2", frontend_dir=None,
+            model=OpenAICompatibleModel("https://api.example.com/v1", "k", "glm-4"),
+            registry=AgentRegistry(),
+        )
+        self.assertEqual(with_model.model.model, "glm-4")
+        with_model.server_close()
+
     def test_config_dependency_cycle_rejected(self) -> None:
         config_path = Path(self._tmp.name) / "cycle.json"
         config_path.write_text(json.dumps({"agents": [

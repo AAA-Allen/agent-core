@@ -255,3 +255,17 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 245 passed;`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q` 连续三轮 245 passed。
+
+## Session 2026-10-25(续七):真实模型接入(v0.2.0 后首个增量)
+
+### 已完成
+
+- [x] `agent_core/models.py`:`OpenAICompatibleModel`——纯标准库 urllib 实现 OpenAI 兼容 chat completions;单请求不重试;HTTP/传输/超时/畸形响应统一映射为 `ModelRequestError`(稳定原因码,消息不含密钥与载荷);构造期校验;`model_from_environment()` 三变量齐备才生效。
+- [x] `llm` 声明式节点:`system`/`prompt` 模板渲染 → 调用 `ctx.model` → 回复写入 `into` 键;未绑定模型 BLOCKED `MODEL_NOT_CONFIGURED`,模板缺键 FAILED `PROMPT_KEY_MISSING`,请求失败 FAILED 透传原因码。
+- [x] 服务端注入:`create_server(model=...)` 默认取环境;模型传递到配置 Agent 工厂与热重载;`/api/health` 报告 `model_configured`/`model_name`(不泄露密钥)。
+- [x] `examples/assistant_agent.json`:validate → llm → template 的问答 Agent;未配置时诚实 BLOCKED。
+- [x] 测试 13 项:假 OpenAI 端点(成功/401/畸形 JSON/空 choices/坏 content/构造校验/消息校验/环境变量)、llm 节点四态、服务端注入调用与未配置阻断、health 报告。全部不触真网。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 257 passed。
