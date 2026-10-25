@@ -423,8 +423,6 @@ function submitTask(raw) {
   if (task.mode === 'live') runLiveTask(task); else runDemoTask(task);
 }
 
-const serverRunCache = new Map();
-
 function runInspectorBody(run, session = null) {
   const nodes = run.trace.filter((event) => event.event_type === 'node.started').map((event) => event.node_id).join(' → ') || '（无节点执行）';
   const traceRows = run.trace.map((event) => `<tr><td>${escapeHtml(event.sequence)}</td><td>${escapeHtml(event.event_type)}</td><td>${escapeHtml(event.node_id || '—')}</td><td>${escapeHtml(event.status)}</td><td>${escapeHtml(event.duration_ms != null ? `${event.duration_ms} ms` : '—')}</td></tr>`).join('');
@@ -463,41 +461,61 @@ function openDetail() {
   $('detailModal').showModal(); refreshIcons();
 }
 
-function openServerRunDetail(runId) {
-  const record = serverRunCache.get(runId); if (!record) return;
-  $('modalTitle').textContent = `服务端运行 ${runId}`;
-  $('modalBody').innerHTML = runInspectorBody(record.run, record.session);
-  $('detailModal').showModal(); refreshIcons();
+const serverRunCache = new Map();
+const serverRunsView = { offset: 0, total: null, items: [] };
+
+function serverRunRow(item) {
+  const ok = item.status === 'COMPLETED';
+  const meta = [item.agent || '未知 Agent', item.status + (item.reason_code ? ` · ${item.reason_code}` : ''), clockTime(item.started_at)]
+    .filter(Boolean).join(' · ');
+  return `<button class="history-item server-run" data-run-id="${escapeHtml(item.run_id)}"><span class="history-icon">${icon(ok ? 'check' : 'triangle-alert')}</span><span class="history-content"><span class="history-name">${escapeHtml(item.summary || item.run_id)}</span><span class="history-meta"><span class="mini-status ${ok ? 'completed' : 'failed'}"></span>${escapeHtml(meta)}</span></span></button>`;
 }
 
-async function renderLogsView() {
+async function renderLogsView(reset = true) {
   $('executionTitle').textContent = '运行日志';
+  if (reset) { serverRunsView.offset = 0; serverRunsView.total = null; serverRunsView.items = []; }
   const rows = [];
   if (state.live) {
     try {
-      const payload = await apiFetch('/api/runs', {}, 3000);
-      const recent = payload.runs.slice(-12).reverse();
-      const details = await Promise.all(recent.map(async (runId) => {
-        try {
-          const payload = await apiFetch(`/api/runs/${runId}`, {}, 3000);
-          serverRunCache.set(runId, { run: payload.run, session: payload.session || null });
-          return payload.run;
-        } catch { return null; }
-      }));
-      const serverRows = details.filter(Boolean).map((run) => `<button class="history-item server-run" data-run-id="${escapeHtml(run.run_id)}"><span class="history-icon">${icon(run.status === 'COMPLETED' ? 'check' : 'triangle-alert')}</span><span class="history-content"><span class="history-name">${escapeHtml((run.state && run.state.summary) || run.run_id)}</span><span class="history-meta"><span class="mini-status ${run.status === 'COMPLETED' ? 'completed' : 'failed'}"></span>${escapeHtml(run.status)} · ${escapeHtml(clockTime(run.stopped_at))}</span></span></button>`);
-      rows.push(`<div class="history-heading server-heading"><h2>服务端运行记录</h2><span>${payload.runs.length} 条 · 活跃 ${payload.active.length}</span></div>`);
-      if (serverRows.length) rows.push(serverRows.join(''));
-      else rows.push('<div class="timeline-empty">服务端暂无持久化运行</div>');
+      const payload = await apiFetch(`/api/runs?limit=10&offset=${serverRunsView.offset}`, {}, 5000);
+      serverRunsView.items = serverRunsView.items.concat(payload.runs);
+      serverRunsView.total = payload.total;
+      serverRunsView.offset += payload.runs.length;
+      rows.push(`<div class="history-heading server-heading"><h2>服务端运行记录</h2><span>${payload.total} 条 · 活跃 ${payload.active.length}</span></div>`);
+      if (serverRunsView.items.length) {
+        rows.push(serverRunsView.items.map(serverRunRow).join(''));
+        if (serverRunsView.items.length < serverRunsView.total) {
+          rows.push(`<div class="load-more-wrap"><button class="text-button" id="loadMoreRuns">加载更多(还有 ${serverRunsView.total - serverRunsView.items.length} 条)</button></div>`);
+        }
+      } else {
+        rows.push('<div class="timeline-empty">服务端暂无持久化运行</div>');
+      }
     } catch { rows.push('<div class="timeline-empty">无法读取服务端运行记录</div>'); }
   }
   rows.push('<div class="history-heading server-heading"><h2>本页任务</h2></div>');
   rows.push(state.tasks.map((task) => `<div class="timeline-step ${task.status === 'failed' ? 'failed' : 'done'}"><span class="step-marker">${icon(task.status === 'failed' ? 'triangle-alert' : 'check')}</span><span class="step-rail"></span><div><div class="step-name">${escapeHtml(task.title)}</div><div class="step-desc">${escapeHtml(`${task.mode === 'live' ? 'Runtime API' : '本地演示'} · ${statusLabel(task)}`)}</div></div><span class="step-time">${escapeHtml(task.time)}</span></div>`).join('') || '<div class="timeline-empty">暂无本页任务</div>');
   $('timeline').innerHTML = `<div class="timeline-list">${rows.join('')}</div>`;
   $('timeline').querySelectorAll('[data-run-id]').forEach((item) => item.addEventListener('click', () => openServerRunDetail(item.dataset.runId)));
+  const more = $('loadMoreRuns');
+  if (more) more.addEventListener('click', () => renderLogsView(false));
   $('resultPanel').classList.add('hidden');
   updateCancelButton(null);
   updateResumeButton(null);
   refreshIcons();
+}
+
+async function openServerRunDetail(runId) {
+  let record = serverRunCache.get(runId);
+  if (!record) {
+    try {
+      const payload = await apiFetch(`/api/runs/${runId}`, {}, 6000);
+      record = { run: payload.run, session: payload.session || null };
+      serverRunCache.set(runId, record);
+    } catch { return; }
+  }
+  $('modalTitle').textContent = `服务端运行 ${runId}`;
+  $('modalBody').innerHTML = runInspectorBody(record.run, record.session);
+  $('detailModal').showModal(); refreshIcons();
 }
 
 async function renderAgentTopology() {

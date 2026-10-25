@@ -25,3 +25,4 @@ body:not(.live) .status-dot{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158
 .resume-button{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:999px;border:1px solid rgba(79,70,229,.32);background:rgba(79,70,229,.08);color:#4338ca;font:600 12px/1 "Noto Sans SC",sans-serif;cursor:pointer;transition:background .15s ease;margin-right:8px}
 .resume-button:hover{background:rgba(79,70,229,.15)}
 .resume-button svg{width:14px;height:14px}
+.load-more-wrap{text-align:center;padding:10px 0}

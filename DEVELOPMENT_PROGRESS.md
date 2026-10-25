@@ -194,3 +194,17 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 235 passed(170 基线 + Agent 外壳 19 + HTTP 服务 24 + 节点库 12 + 契约 10)。
+
+## Session 2026-10-25(续三):运行列表分页与跨进程恢复
+
+### 已完成
+
+- [x] `GET /api/runs` 重构:`?limit=`(1-100)/`?offset=`/`?status=` 过滤,按开始时间倒序,每条返回 `{run_id, status, reason_code, started_at, stopped_at, summary, simulated, agent}` 摘要;非法参数 400 `INVALID_QUERY`;不可读记录以 `UNREADABLE` 状态呈现,不静默消失。
+- [x] 运行→Agent 归属索引持久化:`RunStore` 目录下 `.agent_index.json`(原子写、启动加载、schema 校验、损坏忽略),**跨进程恢复打通**——重启后的服务实例可对既有 BLOCKED 运行执行 resume(有测试)。
+- [x] `RunStore.list_runs()` 跳过点文件,防止索引/临时文件被当作运行记录。
+- [x] 前端日志视图:服务端摘要直出(消灭 N+1 请求),每页 10 条 + "加载更多",点击行懒加载完整检查器;前端资源 URL 版本化(`?v=`)对抗 webview 缓存。
+- [x] 修复前端重复函数定义(旧版 `renderLogsView` 残留导致新版被覆盖),新增顶层函数重名自查。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 237 passed(170 基线 + Agent 外壳 19 + HTTP 服务 26 + 节点库 12 + 契约 10)。

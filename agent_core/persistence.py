@@ -84,7 +84,7 @@ class RunStore:
             return []
         return sorted(
             path.stem for path in self._directory.glob("*.json")
-            if not path.name.endswith(".events.json")
+            if not path.name.startswith(".") and not path.name.endswith(".events.json")
         )
 
     def save_lifecycle_events(self, run_id: str, events: tuple[LifecycleEvent, ...]) -> Path:

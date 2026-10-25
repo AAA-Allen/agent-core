@@ -23,6 +23,13 @@ class ServerTestBase(unittest.TestCase):
         self._thread.start()
         self.addCleanup(self._stop_server)
 
+    def register_recovery_agent(self) -> None:
+        from agent_core.server import register_agents_from_config
+
+        register_agents_from_config(
+            "examples/recovery_agent.json", self.server.registry, runtime=self.server.runtime,
+        )
+
     def _stop_server(self) -> None:
         self.server.shutdown()
         self.server.server_close()
@@ -73,7 +80,7 @@ class ServerApiTests(ServerTestBase):
         run_id = run["run_id"]
         status, payload = self.request("GET", "/api/runs")
         self.assertEqual(status, 200)
-        self.assertIn(run_id, payload["runs"])
+        self.assertTrue(any(item["run_id"] == run_id for item in payload["runs"]))
         status, payload = self.request("GET", f"/api/runs/{run_id}")
         self.assertEqual(status, 200)
         self.assertEqual(payload["run"]["state"], run["state"])
@@ -259,7 +266,7 @@ class ServerLifecycleTests(ServerTestBase):
                 break
             time.sleep(0.05)
         self.assertNotIn(run_id, listing["active"])
-        self.assertIn(run_id, listing["runs"])
+        self.assertTrue(any(item["run_id"] == run_id for item in listing["runs"]))
 
     def test_async_run_rejects_reused_run_id(self) -> None:
         status, payload = self.post_json(
@@ -371,10 +378,7 @@ class ServerLifecycleTests(ServerTestBase):
 class ServerResumeTests(ServerTestBase):
     def setUp(self) -> None:
         super().setUp()
-        from agent_core.server import load_agents_from_config
-
-        for agent in load_agents_from_config("examples/recovery_agent.json", runtime=self.server.runtime):
-            self.server.registry.register(agent)
+        self.register_recovery_agent()
 
     def test_blocked_run_resumes_with_state_updates(self) -> None:
         status, payload = self.post_json(
@@ -505,6 +509,79 @@ class ServerSessionTests(ServerTestBase):
         status, body = self.request("GET", "/api/sessions/missing-session")
         self.assertEqual(status, 404)
         self.assertEqual(body["error"]["code"], "UNKNOWN_SESSION")
+
+
+class ServerRunIndexTests(ServerTestBase):
+    def test_list_runs_pagination_filter_and_order(self) -> None:
+        # 先创建阻断运行,让最新的两条是带 summary 的完成运行
+        self.post_json("/api/runs", {"agent": "workbench", "input": {}})
+        self.post_json("/api/runs", {"agent": "workbench", "input": {"task": "任务一;步骤"}})
+        self.post_json("/api/runs", {"agent": "workbench", "input": {"task": "任务二;步骤"}})
+
+        status, payload = self.request("GET", "/api/runs?limit=2")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total"], 3)
+        self.assertEqual(len(payload["runs"]), 2)
+        self.assertEqual(payload["offset"], 0)
+        started = [item["started_at"] for item in payload["runs"]]
+        self.assertEqual(started, sorted(started, reverse=True))
+        self.assertTrue(all(item["agent"] == "workbench" for item in payload["runs"]))
+        self.assertIn("已完成对", payload["runs"][0]["summary"])
+
+        status, payload = self.request("GET", "/api/runs?limit=2&offset=2")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(payload["runs"]), 1)
+
+        status, payload = self.request("GET", "/api/runs?status=BLOCKED")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["runs"][0]["status"], "BLOCKED")
+        self.assertEqual(payload["runs"][0]["reason_code"], "EMPTY_TASK")
+
+        status, body = self.request("GET", "/api/runs?limit=0")
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "INVALID_QUERY")
+        status, body = self.request("GET", "/api/runs?status=NOPE")
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "INVALID_QUERY")
+
+    def test_resume_after_server_restart(self) -> None:
+        from agent_core.server import create_server, register_agents_from_config
+
+        self.register_recovery_agent()
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "recovery-router", "input": {"task": "重启前的阻断任务"}},
+        )
+        self.assertEqual(status, 200)
+        run = payload["run"]
+        self.assertEqual(run["status"], "BLOCKED")
+
+        # 模拟重启:同一存储目录上的全新服务实例,依赖持久化的归属索引
+        restarted = create_server(
+            port=0, store_dir=Path(self._tmp.name) / "runs", frontend_dir=None,
+        )
+        register_agents_from_config(
+            "examples/recovery_agent.json", restarted.registry, runtime=restarted.runtime,
+        )
+        thread = threading.Thread(target=restarted.serve_forever, daemon=True)
+        thread.start()
+        try:
+            connection = HTTPConnection("127.0.0.1", restarted.server_address[1], timeout=10)
+            connection.request(
+                "POST", f"/api/runs/{run['run_id']}/resume",
+                body=json.dumps({"state_updates": {"priority": "high"}}),
+                headers={"Content-Type": "application/json"},
+            )
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            connection.close()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(body["run"]["status"], "COMPLETED")
+            self.assertEqual(body["run"]["state"]["outcome"], "加急通道处理:重启前的阻断任务")
+        finally:
+            restarted.shutdown()
+            restarted.server_close()
+            thread.join(timeout=5.0)
 
 
 if __name__ == "__main__":

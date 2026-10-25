@@ -34,6 +34,7 @@ logger = logging.getLogger("agent_core.server")
 
 _RUNS_PATH = re.compile(r"^/api/runs/([A-Za-z0-9][A-Za-z0-9_-]{0,127})(/.*)?$")
 _SESSIONS_PATH = re.compile(r"^/api/sessions/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$")
+_RUN_STATUSES = ("COMPLETED", "BLOCKED", "FAILED", "CANCELED")
 _MAX_BODY_BYTES = 1_000_000
 _STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -540,10 +541,71 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             self.server.release_active(run_id)  # type: ignore[attr-defined]
 
     def _handle_list_runs(self) -> None:
+        from urllib.parse import parse_qs
+
+        query = parse_qs(urlsplit(self.path).query)
+
+        def int_param(name: str, default: int, low: int, high: int) -> int:
+            values = query.get(name)
+            if not values:
+                return default
+            try:
+                value = int(values[0])
+            except ValueError:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_QUERY", f"'{name}' must be an integer")
+            if value < low or value > high:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_QUERY", f"'{name}' must be between {low} and {high}")
+            return value
+
+        limit = int_param("limit", 20, 1, 100)
+        offset = int_param("offset", 0, 0, 1_000_000)
+        status_values = query.get("status")
+        status_filter = status_values[0] if status_values else None
+        if status_filter is not None and status_filter not in _RUN_STATUSES:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_QUERY", f"'status' must be one of {', '.join(_RUN_STATUSES)}")
+
+        entries = []
+        for run_id in self.store.list_runs():
+            entry = self._run_summary(run_id)
+            if entry is None:
+                continue
+            if status_filter is not None and entry["status"] != status_filter:
+                continue
+            entries.append(entry)
+        entries.sort(key=lambda entry: (entry["started_at"] or "", entry["run_id"]), reverse=True)
         self._send_json(HTTPStatus.OK, {
-            "runs": self.store.list_runs(),
+            "runs": entries[offset:offset + limit],
+            "total": len(entries),
+            "offset": offset,
+            "limit": limit,
             "active": self.server.active_run_ids(),  # type: ignore[attr-defined]
         })
+
+    def _run_summary(self, run_id: str) -> dict[str, Any] | None:
+        try:
+            result = self.store.load(run_id)
+        except ValueError:
+            return {
+                "run_id": run_id,
+                "status": "UNREADABLE",
+                "reason_code": None,
+                "started_at": None,
+                "stopped_at": None,
+                "summary": None,
+                "simulated": False,
+                "agent": self.server.agent_for_run(run_id),  # type: ignore[attr-defined]
+            }
+        state = result.state or {}
+        return {
+            "run_id": result.run_id,
+            "status": result.status.value,
+            "reason_code": result.reason_code,
+            "started_at": result.trace[0].started_at if result.trace else None,
+            "stopped_at": result.stopped_at,
+            "summary": state.get("summary") if isinstance(state, dict) else None,
+            "simulated": result.simulated,
+            "agent": self.server.agent_for_run(run_id),  # type: ignore[attr-defined]
+        }
 
     def _is_resumable(self, result: Any) -> bool:
         """A run is resumable when it failed or blocked past its first boundary."""
@@ -798,11 +860,13 @@ class AgentServer(ThreadingHTTPServer):
         self.frontend_dir = frontend_dir
         self.checkpoint_store = checkpoint_store
         self.sessions = SessionManager()
+        self.run_index_path = store.directory / ".agent_index.json"
         self._active_runs: set[str] = set()
         self._active_lock = threading.Lock()
         self._run_agents: dict[str, str] = {}
         self._run_sessions: dict[str, str] = {}
         self._run_agents_lock = threading.Lock()
+        self._load_run_index()
 
     def track_active(self, run_id: str) -> bool:
         """Claim a run_id for async execution; False when already claimed."""
@@ -821,11 +885,12 @@ class AgentServer(ThreadingHTTPServer):
             return sorted(self._active_runs)
 
     def record_run_agent(self, run_id: str, agent_name: str, session_id: str | None = None) -> None:
-        """Remember which agent (and session) executed a run."""
+        """Remember which agent (and session) executed a run; index survives restarts."""
         with self._run_agents_lock:
             self._run_agents[run_id] = agent_name
             if session_id:
                 self._run_sessions[run_id] = session_id
+        self._persist_run_index()
 
     def agent_for_run(self, run_id: str) -> str | None:
         with self._run_agents_lock:
@@ -834,6 +899,45 @@ class AgentServer(ThreadingHTTPServer):
     def session_for_run(self, run_id: str) -> str | None:
         with self._run_agents_lock:
             return self._run_sessions.get(run_id)
+
+    def _persist_run_index(self) -> None:
+        import json as _json
+        import uuid as _uuid
+
+        with self._run_agents_lock:
+            payload = {
+                "schema_version": 1,
+                "run_agents": dict(self._run_agents),
+            }
+        target = self.run_index_path
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.parent / f".{target.name}.{_uuid.uuid4().hex}.tmp"
+            tmp.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(target)
+        except OSError:
+            logger.warning("could not persist run agent index at %s", target)
+
+    def _load_run_index(self) -> None:
+        import json as _json
+
+        target = self.run_index_path
+        if not target.is_file():
+            return
+        try:
+            payload = _json.loads(target.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict) or payload.get("schema_version", 1) != 1:
+                raise ValueError("unsupported run index schema_version")
+            run_agents = payload.get("run_agents", {})
+            if not isinstance(run_agents, dict):
+                raise ValueError("run index run_agents must be an object")
+            with self._run_agents_lock:
+                for run_id, agent_name in run_agents.items():
+                    _validate_run_id(run_id)
+                    if isinstance(agent_name, str) and agent_name.strip():
+                        self._run_agents[run_id] = agent_name
+        except (OSError, ValueError) as exc:
+            logger.warning("ignoring unreadable run agent index %s: %s", target, exc)
 
 
 def create_server(

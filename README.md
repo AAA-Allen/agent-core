@@ -206,7 +206,7 @@ python -m agent_core.server --host 127.0.0.1 --port 8000 --store-dir outputs/ser
 | `GET` | `/api/health` | 存活检查与已注册 Agent 列表 |
 | `GET` | `/api/agents` | Agent 描述与图拓扑（`Agent.describe()`） |
 | `POST` | `/api/runs` | 创建运行；`wait=true`（默认）同步返回终态，`wait=false` 返回 `202` 后轮询 |
-| `GET` | `/api/runs` | 已持久化的运行列表与活跃运行 |
+| `GET` | `/api/runs` | 运行记录列表：`?limit=`（1-100，默认 20）、`?offset=`、`?status=` 过滤；按开始时间倒序，每条含状态、原因码、摘要与 Agent 归属 |
 | `GET` | `/api/runs/{id}` | 终态结果（含 Trace 与生命周期事件） |
 | `GET` | `/api/runs/{id}/status` | 当前生命周期状态（含异步运行的 `PENDING`/`RUNNING`） |
 | `GET` | `/api/runs/{id}/events` | 生命周期事件序列 |
@@ -217,7 +217,7 @@ python -m agent_core.server --host 127.0.0.1 --port 8000 --store-dir outputs/ser
 | `POST` | `/api/runs/{id}/cancel` | 发出协作式取消请求，返回是否受理 |
 | `POST` | `/api/runs/{id}/resume` | 从非终态 checkpoint 显式恢复；可选 `state_updates` 注入状态修正 |
 
-恢复语义与 Runtime 一致：只有 `BLOCKED`/`FAILED` 且存在未完成边界的运行可恢复；`state_updates` 合并进 checkpoint 状态并把 `state_version` 前移，恢复产生 `run.resumed` 生命周期事件。恢复后的 Trace 只覆盖恢复段；跨进程重启后的运行因缺少 Agent 归属记录暂不可通过 API 恢复。`examples/recovery_agent.json` 演示"中途阻断 → 注入修正 → 完成"的完整闭环。
+恢复语义与 Runtime 一致：只有 `BLOCKED`/`FAILED` 且存在未完成边界的运行可恢复；`state_updates` 合并进 checkpoint 状态并把 `state_version` 前移，恢复产生 `run.resumed` 生命周期事件。恢复后的 Trace 只覆盖恢复段。运行→Agent 的归属记录持久化在 `RunStore` 目录的 `.agent_index.json`(服务端簿记,不进入核心持久化模式),因此**服务重启后仍可恢复**;若索引不可读则回退为仅本进程可恢复。`examples/recovery_agent.json` 演示"中途阻断 → 注入修正 → 完成"的完整闭环。
 
 ### 会话记忆
 
