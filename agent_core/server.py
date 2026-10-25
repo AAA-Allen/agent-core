@@ -21,10 +21,10 @@ from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
-from .agent import Agent
+from .agent import Agent, InMemoryMemory
 from .nodes import build_agent_from_config
 from .persistence import RunStore, _lifecycle_event_to_dict
 from .runtime import Runtime, _validate_run_id
@@ -32,6 +32,7 @@ from .runtime import Runtime, _validate_run_id
 logger = logging.getLogger("agent_core.server")
 
 _RUNS_PATH = re.compile(r"^/api/runs/([A-Za-z0-9][A-Za-z0-9_-]{0,127})(/.*)?$")
+_SESSIONS_PATH = re.compile(r"^/api/sessions/([A-Za-z0-9][A-Za-z0-9_-]{0,127})$")
 _MAX_BODY_BYTES = 1_000_000
 _STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -59,15 +60,47 @@ class AgentRegistry:
 
     def __init__(self) -> None:
         self._agents: dict[str, Agent] = {}
+        self._factories: dict[str, Callable[..., Agent]] = {}
         self._lock = threading.RLock()
 
     def register(self, agent: Agent) -> None:
         if not isinstance(agent, Agent):
             raise TypeError("agent must be an Agent instance")
         with self._lock:
-            if agent.spec.name in self._agents:
+            if agent.spec.name in self._agents or agent.spec.name in self._factories:
                 raise ValueError(f"agent already registered: {agent.spec.name}")
             self._agents[agent.spec.name] = agent
+            self._factories[agent.spec.name] = lambda memory=None, agent=agent: agent
+
+    def register_factory(self, name: str, factory: Callable[..., Agent]) -> None:
+        """Register a buildable agent; the factory receives ``memory=``."""
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("agent name must be a nonempty string")
+        if not callable(factory):
+            raise TypeError("agent factory must be callable")
+        with self._lock:
+            if name in self._agents or name in self._factories:
+                raise ValueError(f"agent already registered: {name}")
+            master = factory(memory=None)
+            if not isinstance(master, Agent):
+                raise TypeError("agent factory must return an Agent instance")
+            if master.spec.name != name:
+                raise ValueError(f"agent factory builds a different name: {master.spec.name!r} != {name!r}")
+            self._agents[name] = master
+            self._factories[name] = factory
+
+    def build(self, name: str, *, memory: Any = None) -> Agent | None:
+        """Build an agent instance, optionally bound to session memory."""
+        if not isinstance(name, str):
+            return None
+        with self._lock:
+            factory = self._factories.get(name)
+        if factory is None:
+            return self.get(name)
+        try:
+            return factory(memory=memory)
+        except TypeError:
+            return factory()
 
     def get(self, name: str) -> Agent | None:
         if not isinstance(name, str):
@@ -93,13 +126,48 @@ class AgentRegistry:
             ]
 
 
-def _build_workbench(runtime: Runtime, registry: Any) -> Agent:
+class SessionManager:
+    """Per-session memory instances shared by an agent's runs."""
+
+    def __init__(self) -> None:
+        self._memories: dict[str, InMemoryMemory] = {}
+        self._lock = threading.RLock()
+
+    def memory_for(self, session_id: str) -> InMemoryMemory:
+        _validate_run_id(session_id)
+        with self._lock:
+            memory = self._memories.get(session_id)
+            if memory is None:
+                memory = InMemoryMemory()
+                self._memories[session_id] = memory
+            return memory
+
+    def snapshot(self, session_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            memory = self._memories.get(session_id)
+        return None if memory is None else memory.snapshot()
+
+    def ids(self) -> list[str]:
+        with self._lock:
+            return sorted(self._memories)
+
+    def clear(self, session_id: str) -> bool:
+        with self._lock:
+            if session_id in self._memories:
+                del self._memories[session_id]
+                return True
+            return False
+
+
+def _build_workbench(runtime: Runtime, registry: Any, memory: Any = None) -> Agent:
     """Deterministic demo agent backing the bundled frontend workbench.
 
     It decomposes the requested task text into plan entries, runs a registered
-    text-stats tool over the task, and produces a summary. No model or network
-    access is involved; the point is to exercise the real runtime boundaries
-    (graph execution, tool gating, trace and lifecycle persistence).
+    text-stats tool over the task, and produces a summary. With session memory
+    bound it also records processed tasks and surfaces the session position.
+    No model or network access is involved; the point is to exercise the real
+    runtime boundaries (graph execution, tool gating, trace and lifecycle
+    persistence).
     """
     from .agent import AgentBuilder
     from .results import NodeResult
@@ -115,6 +183,8 @@ def _build_workbench(runtime: Runtime, registry: Any) -> Agent:
         pieces = [piece.strip() for piece in re.split(r"[。;；!！?\n]+", task) if piece.strip()]
         entries = pieces or [task]
         plan_items = [{"index": index + 1, "title": entry[:60]} for index, entry in enumerate(entries)]
+        if ctx.memory is not None:
+            ctx.memory.write("last_task", task)
         return NodeResult.success(
             {"plan": plan_items, "step_count": len(plan_items)}, route="executed"
         )
@@ -124,6 +194,12 @@ def _build_workbench(runtime: Runtime, registry: Any) -> Agent:
         if stats.status.value != "COMPLETED":
             return NodeResult.failed("TOOL_EXECUTION_FAILED")
         processed = [item["title"] for item in ctx.state["plan"]]
+        if ctx.memory is not None:
+            history = ctx.memory.read("processed_tasks", [])
+            if not isinstance(history, list):
+                history = []
+            history.append({"task": ctx.state["task"], "steps": ctx.state["step_count"]})
+            ctx.memory.write("processed_tasks", history)
         return NodeResult.success(
             {"text_stats": dict(stats.output), "processed": processed}, route="summarized"
         )
@@ -132,7 +208,13 @@ def _build_workbench(runtime: Runtime, registry: Any) -> Agent:
         task = ctx.state["task"]
         count = ctx.state["step_count"]
         summary = f"已完成对“{task}”的 {count} 个步骤的确定性处理。"
-        return NodeResult.success({"summary": summary})
+        updates: dict[str, Any] = {"summary": summary}
+        if ctx.memory is not None:
+            history = ctx.memory.read("processed_tasks", [])
+            session_count = len(history) if isinstance(history, list) else 0
+            updates["session_task_count"] = session_count
+            updates["summary"] = f"{summary}(本会话第 {session_count} 个任务)"
+        return NodeResult.success(updates)
 
     return (
         AgentBuilder(
@@ -140,6 +222,7 @@ def _build_workbench(runtime: Runtime, registry: Any) -> Agent:
             instructions="接收任务文本,拆解为计划步骤,执行统计并输出摘要。",
             description="Deterministic workbench demo agent.",
             tools=registry,
+            memory=memory,
         )
         .add_node("intake", intake)
         .add_node("plan", plan)
@@ -156,7 +239,10 @@ def _build_workbench(runtime: Runtime, registry: Any) -> Agent:
 def build_default_registry(*, runtime: Runtime) -> AgentRegistry:
     """Registry with the bundled demo agent; extend it via ``register``."""
     registry = AgentRegistry()
-    registry.register(_build_workbench(runtime, _default_tools()))
+    tools = _default_tools()
+    registry.register_factory(
+        "workbench", lambda memory=None: _build_workbench(runtime, tools, memory),
+    )
     return registry
 
 
@@ -167,22 +253,41 @@ def load_agents_from_config(
     tools: Any = None,
 ) -> list[Agent]:
     """Build agents from a JSON config file (single config or ``agents`` list)."""
-    from .tools import Tool, ToolRegistry
-
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if isinstance(payload, Mapping) and isinstance(payload.get("agents"), list):
-        configs: list[Mapping[str, Any]] = payload["agents"]
-    elif isinstance(payload, Mapping):
-        configs = [payload]
-    else:
-        raise ValueError("agent config file must be an object or {'agents': [...]}")
+    configs = _read_agent_configs(path)
     if tools is None:
         tools = _default_tools()
-    agents = [build_agent_from_config(config, runtime=runtime, tools=tools) for config in configs]
-    for agent in agents:
-        if not agent.spec.description:
-            logger.warning("config agent '%s' has no description", agent.spec.name)
-    return agents
+    return [build_agent_from_config(config, runtime=runtime, tools=tools) for config in configs]
+
+
+def register_agents_from_config(
+    path: str | Path,
+    registry: AgentRegistry,
+    *,
+    runtime: Runtime,
+    tools: Any = None,
+) -> list[str]:
+    """Register config agents as factories so sessions can bind memory."""
+    configs = _read_agent_configs(path)
+    if tools is None:
+        tools = _default_tools()
+    for config in configs:
+        config = dict(config)
+        registry.register_factory(
+            config["name"],
+            lambda memory=None, config=config: build_agent_from_config(
+                config, runtime=runtime, tools=tools, memory=memory,
+            ),
+        )
+    return [config["name"] for config in configs]
+
+
+def _read_agent_configs(path: str | Path) -> list[Mapping[str, Any]]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(payload, Mapping) and isinstance(payload.get("agents"), list):
+        return payload["agents"]
+    if isinstance(payload, Mapping):
+        return [payload]
+    raise ValueError("agent config file must be an object or {'agents': [...]}")
 
 
 def _result_payload(result: Any, *, resumable: bool = False) -> dict[str, Any]:
@@ -281,6 +386,10 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                     self._handle_run_events_stream(run_id)
                 else:
                     raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"unknown path: {path}")
+            elif path == "/api/sessions":
+                self._handle_list_sessions()
+            elif (match := _SESSIONS_PATH.match(path)) is not None:
+                self._handle_get_session(match.group(1))
             else:
                 self._serve_static(path)
         except ApiError as error:
@@ -298,6 +407,19 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                 self._handle_cancel(match.group(1))
             elif (match := _RUNS_PATH.match(path)) is not None and match.group(2) == "/resume":
                 self._handle_resume(match.group(1))
+            else:
+                raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"unknown path: {path}")
+        except ApiError as error:
+            self._send_error_json(error)
+        except Exception:
+            logger.exception("unhandled server error for %s", path)
+            self._send_error_json(ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "internal server error"))
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        path = urlsplit(self.path).path
+        try:
+            if (match := _SESSIONS_PATH.match(path)) is not None:
+                self._handle_clear_session(match.group(1))
             else:
                 raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"unknown path: {path}")
         except ApiError as error:
@@ -336,7 +458,16 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                 _validate_run_id(run_id)
             except ValueError as exc:
                 raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_RUN_ID", str(exc))
-        agent = self.registry.get(agent_name)
+        session_id = payload.get("session_id")
+        if session_id is not None:
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_SESSION", "'session_id' must be a nonempty string")
+            try:
+                _validate_run_id(session_id)
+            except ValueError as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_SESSION", str(exc))
+        memory = self.server.sessions.memory_for(session_id) if session_id else None
+        agent = self.registry.build(agent_name, memory=memory)
         if agent is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_AGENT", f"unknown agent: {agent_name}")
         if wait:
@@ -344,7 +475,7 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
 
             if run_id is None:
                 run_id = uuid4().hex
-            self.server.record_run_agent(run_id, agent_name)  # type: ignore[attr-defined]
+            self.server.record_run_agent(run_id, agent_name, session_id)  # type: ignore[attr-defined]
             try:
                 result = agent.run(input_data, run_id=run_id).run
             except TypeError as exc:
@@ -353,12 +484,13 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                 raise self._run_conflict_error(exc)
             self._send_json(HTTPStatus.OK, {
                 "run": _result_payload(result, resumable=self._is_resumable(result)),
+                **self._session_block(session_id),
             })
             return
         if run_id is None:
             from uuid import uuid4
             run_id = uuid4().hex
-        self.server.record_run_agent(run_id, agent_name)  # type: ignore[attr-defined]
+        self.server.record_run_agent(run_id, agent_name, session_id)  # type: ignore[attr-defined]
         if not self.server.track_active(run_id):  # type: ignore[attr-defined]
             raise ApiError(HTTPStatus.CONFLICT, "RUN_ALREADY_ACTIVE", f"run_id is already executing: {run_id}")
         try:
@@ -373,7 +505,17 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             target=self._execute_async_run, args=(agent, input_data, run_id), daemon=True,
         )
         worker.start()
-        self._send_json(HTTPStatus.ACCEPTED, {"run_id": run_id, "status": "PENDING"})
+        self._send_json(HTTPStatus.ACCEPTED, {
+            "run_id": run_id,
+            "status": "PENDING",
+            **self._session_block(session_id),
+        })
+
+    def _session_block(self, session_id: str | None) -> dict[str, Any]:
+        if not session_id:
+            return {}
+        snapshot = self.server.sessions.snapshot(session_id)  # type: ignore[attr-defined]
+        return {"session": {"id": session_id, "memory": snapshot if snapshot is not None else {}}}
 
     @staticmethod
     def _run_conflict_error(exc: ValueError) -> ApiError:
@@ -436,8 +578,10 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             _time.sleep(0.05)
         if result is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_RUN", f"unknown run: {run_id}")
+        session_id = self.server.session_for_run(run_id)  # type: ignore[attr-defined]
         self._send_json(HTTPStatus.OK, {
             "run": _result_payload(result, resumable=self._is_resumable(result)),
+            **self._session_block(session_id),
         })
 
     def _handle_resume(self, run_id: str) -> None:
@@ -523,6 +667,29 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_RUN_ID", str(exc))
         self._send_json(HTTPStatus.OK, {"run_id": run_id, "accepted": accepted})
+
+    def _handle_list_sessions(self) -> None:
+        self._send_json(HTTPStatus.OK, {"sessions": self.server.sessions.ids()})  # type: ignore[attr-defined]
+
+    def _handle_get_session(self, session_id: str) -> None:
+        try:
+            _validate_run_id(session_id)
+        except ValueError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_SESSION", str(exc))
+        snapshot = self.server.sessions.snapshot(session_id)  # type: ignore[attr-defined]
+        if snapshot is None:
+            raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_SESSION", f"unknown session: {session_id}")
+        self._send_json(HTTPStatus.OK, {"session_id": session_id, "memory": snapshot})
+
+    def _handle_clear_session(self, session_id: str) -> None:
+        try:
+            _validate_run_id(session_id)
+        except ValueError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_SESSION", str(exc))
+        cleared = self.server.sessions.clear(session_id)  # type: ignore[attr-defined]
+        if not cleared:
+            raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_SESSION", f"unknown session: {session_id}")
+        self._send_json(HTTPStatus.OK, {"session_id": session_id, "cleared": True})
 
     _SSE_POLL_SECONDS = 0.15
     _SSE_HEARTBEAT_SECONDS = 15.0
@@ -629,9 +796,11 @@ class AgentServer(ThreadingHTTPServer):
         self.store = store
         self.frontend_dir = frontend_dir
         self.checkpoint_store = checkpoint_store
+        self.sessions = SessionManager()
         self._active_runs: set[str] = set()
         self._active_lock = threading.Lock()
         self._run_agents: dict[str, str] = {}
+        self._run_sessions: dict[str, str] = {}
         self._run_agents_lock = threading.Lock()
 
     def track_active(self, run_id: str) -> bool:
@@ -650,14 +819,20 @@ class AgentServer(ThreadingHTTPServer):
         with self._active_lock:
             return sorted(self._active_runs)
 
-    def record_run_agent(self, run_id: str, agent_name: str) -> None:
-        """Remember which agent executed a run so resume can find its graph."""
+    def record_run_agent(self, run_id: str, agent_name: str, session_id: str | None = None) -> None:
+        """Remember which agent (and session) executed a run."""
         with self._run_agents_lock:
             self._run_agents[run_id] = agent_name
+            if session_id:
+                self._run_sessions[run_id] = session_id
 
     def agent_for_run(self, run_id: str) -> str | None:
         with self._run_agents_lock:
             return self._run_agents.get(run_id)
+
+    def session_for_run(self, run_id: str) -> str | None:
+        with self._run_agents_lock:
+            return self._run_sessions.get(run_id)
 
 
 def create_server(
@@ -735,9 +910,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.config:
         try:
             for config_path in args.config:
-                for agent in load_agents_from_config(config_path, runtime=server.runtime):
-                    server.registry.register(agent)
-                logger.info("loaded agents from %s", config_path)
+                registered = register_agents_from_config(config_path, server.registry, runtime=server.runtime)
+                logger.info("loaded agents from %s: %s", config_path, ", ".join(registered))
         except (OSError, ValueError, TypeError) as exc:
             logger.error("failed to load agent config: %s", exc)
             server.server_close()

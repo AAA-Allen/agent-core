@@ -63,6 +63,10 @@ class InMemoryMemory:
             raise ValueError("memory key must be nonempty")
         self._values[key] = _json_snapshot({"value": value})["value"]
 
+    def snapshot(self) -> dict[str, Any]:
+        """Return an isolated copy of all stored values for inspection."""
+        return _json_snapshot(self._values)
+
 
 @dataclass(frozen=True)
 class AgentNodeContext:

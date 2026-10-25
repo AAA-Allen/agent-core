@@ -1,6 +1,17 @@
 const STORAGE_KEY = 'agent-workbench-history-v1';
+const SESSION_KEY = 'agent-workbench-session-v1';
 const AGENT_NAME = 'workbench';
 const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'BLOCKED', 'CANCELED'];
+
+function currentSessionId() {
+  let id = null;
+  try { id = window.localStorage.getItem(SESSION_KEY); } catch { /* storage unavailable */ }
+  if (!id) {
+    id = `web-${Math.random().toString(36).slice(2, 10)}`;
+    try { window.localStorage.setItem(SESSION_KEY, id); } catch { /* storage unavailable */ }
+  }
+  return id;
+}
 
 const state = { tasks: [], activeId: null, running: false, view: 'tasks', live: false };
 const $ = (id) => document.getElementById(id);
@@ -54,13 +65,22 @@ async function apiFetch(path, options = {}, timeoutMs = 4000) {
   } finally { window.clearTimeout(timer); }
 }
 
+const AGENT_SELECT_KEY = 'agent-workbench-agent-v1';
+
 async function populateAgentSelect() {
   const select = $('agentSelect');
   if (!select) return;
   try {
     const payload = await apiFetch('/api/agents', {}, 3000);
     select.innerHTML = payload.agents.map((agent) => `<option value="${escapeHtml(agent.name)}">${escapeHtml(agent.name)}</option>`).join('');
-    if (!payload.agents.some((agent) => agent.name === AGENT_NAME)) select.value = payload.agents[0].name;
+    let preferred = null;
+    try { preferred = window.localStorage.getItem(AGENT_SELECT_KEY); } catch { /* storage unavailable */ }
+    const names = payload.agents.map((agent) => agent.name);
+    if (preferred && names.includes(preferred)) select.value = preferred;
+    else if (names.includes(AGENT_NAME)) select.value = AGENT_NAME;
+    select.addEventListener('change', () => {
+      try { window.localStorage.setItem(AGENT_SELECT_KEY, select.value); } catch { /* storage unavailable */ }
+    });
   } catch { select.innerHTML = `<option value="${AGENT_NAME}">${AGENT_NAME}</option>`; }
 }
 
@@ -80,6 +100,15 @@ function updateModeUi() {
   $('inputMode').textContent = state.live ? '实时执行' : '演示模式';
   const note = document.querySelector('.settings-note code');
   if (note) note.textContent = 'python -m agent_core.server';
+}
+
+async function clearSessionMemory() {
+  if (!state.live) return;
+  try {
+    await apiFetch(`/api/sessions/${currentSessionId()}`, { method: 'DELETE' }, 4000);
+    const button = $('clearSessionButton');
+    if (button) { const original = button.textContent; button.textContent = '已清除'; window.setTimeout(() => { button.textContent = original; }, 1500); }
+  } catch { /* session may not exist yet */ }
 }
 
 function markOffline() {
@@ -248,7 +277,7 @@ async function resumeTask(task) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ state_updates: patch }),
     }, 30000);
-    completeLiveTask(task, payload.run);
+    completeLiveTask(task, payload.run, payload.session);
   } catch (error) {
     state.running = false;
     if (error.code === 'UNKNOWN_RUN') { failTask(task, '服务端没有这条运行的记录。'); return; }
@@ -277,10 +306,11 @@ function failTask(task, message) {
   if (state.activeId === task.id) { selectTask(task.id); } else { renderHistory(); }
 }
 
-function completeLiveTask(task, run) {
+function completeLiveTask(task, run, session = null) {
   task.status = run.status === 'COMPLETED' ? 'completed' : 'failed';
   task.completedAt = nowTime();
   task.run = run;
+  task.session = session || null;
   task.summary = run.status === 'COMPLETED'
     ? (run.state && run.state.summary) || '运行已完成。'
     : `${run.status} · 原因码 ${run.reason_code || '未提供'}`;
@@ -335,7 +365,7 @@ async function pollLiveTask(task) {
   for (let attempt = 0; attempt < 10; attempt++) {
     try {
       const payload = await apiFetch(`/api/runs/${task.id}`, {}, 8000);
-      completeLiveTask(task, payload.run);
+      completeLiveTask(task, payload.run, payload.session);
       return;
     } catch (error) {
       if (error.code !== 'UNKNOWN_RUN' || attempt === 9) {
@@ -354,7 +384,7 @@ async function runLiveTask(task) {
     const start = await apiFetch('/api/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent: task.agent || AGENT_NAME, input: { task: task.title }, wait: false }),
+      body: JSON.stringify({ agent: task.agent || AGENT_NAME, input: { task: task.title }, wait: false, session_id: currentSessionId() }),
     }, 8000);
     if (state.activeId === task.id) state.activeId = start.run_id;
     task.id = start.run_id;
@@ -395,7 +425,7 @@ function submitTask(raw) {
 
 const serverRunCache = new Map();
 
-function runInspectorBody(run) {
+function runInspectorBody(run, session = null) {
   const nodes = run.trace.filter((event) => event.event_type === 'node.started').map((event) => event.node_id).join(' → ') || '（无节点执行）';
   const traceRows = run.trace.map((event) => `<tr><td>${escapeHtml(event.sequence)}</td><td>${escapeHtml(event.event_type)}</td><td>${escapeHtml(event.node_id || '—')}</td><td>${escapeHtml(event.status)}</td><td>${escapeHtml(event.duration_ms != null ? `${event.duration_ms} ms` : '—')}</td></tr>`).join('');
   const lifecycleRows = (run.lifecycle_events || []).map((event) => `<tr><td>${escapeHtml(event.sequence)}</td><td>${escapeHtml(event.event_type)}</td><td>${escapeHtml(event.from_status || '—')} → ${escapeHtml(event.to_status)}</td><td>${escapeHtml(event.reason_code || '—')}</td></tr>`).join('');
@@ -410,6 +440,7 @@ function runInspectorBody(run) {
   <div class="detail-output"><strong>执行路径</strong><br />${escapeHtml(nodes)}</div>
   ${traceRows ? `<table class="detail-table"><thead><tr><th>#</th><th>事件</th><th>节点</th><th>状态</th><th>耗时</th></tr></thead><tbody>${traceRows}</tbody></table>` : ''}
   ${lifecycleRows ? `<table class="detail-table"><thead><tr><th>#</th><th>生命周期</th><th>状态迁移</th><th>原因码</th></tr></thead><tbody>${lifecycleRows}</tbody></table>` : ''}
+  ${session ? `<div class="detail-output"><strong>会话 ${escapeHtml(session.id)} 的记忆</strong><br /><pre class="detail-json">${escapeHtml(JSON.stringify(session.memory || {}, null, 2))}</pre></div>` : ''}
   <pre class="detail-json">${escapeHtml(JSON.stringify(run.state, null, 2))}</pre>`;
 }
 
@@ -417,7 +448,7 @@ function openDetail() {
   const task = state.tasks.find((item) => item.id === state.activeId); if (!task) return;
   let body;
   if (task.mode === 'live' && task.run) {
-    body = runInspectorBody(task.run);
+    body = runInspectorBody(task.run, task.session);
   } else {
     body = `<div class="detail-grid">
       <div class="detail-item"><span>运行 ID</span><strong>${escapeHtml(task.id)}</strong></div>
@@ -433,9 +464,9 @@ function openDetail() {
 }
 
 function openServerRunDetail(runId) {
-  const run = serverRunCache.get(runId); if (!run) return;
+  const record = serverRunCache.get(runId); if (!record) return;
   $('modalTitle').textContent = `服务端运行 ${runId}`;
-  $('modalBody').innerHTML = runInspectorBody(run);
+  $('modalBody').innerHTML = runInspectorBody(record.run, record.session);
   $('detailModal').showModal(); refreshIcons();
 }
 
@@ -448,9 +479,9 @@ async function renderLogsView() {
       const recent = payload.runs.slice(-12).reverse();
       const details = await Promise.all(recent.map(async (runId) => {
         try {
-          const { run } = await apiFetch(`/api/runs/${runId}`, {}, 3000);
-          serverRunCache.set(runId, run);
-          return run;
+          const payload = await apiFetch(`/api/runs/${runId}`, {}, 3000);
+          serverRunCache.set(runId, { run: payload.run, session: payload.session || null });
+          return payload.run;
         } catch { return null; }
       }));
       const serverRows = details.filter(Boolean).map((run) => `<button class="history-item server-run" data-run-id="${escapeHtml(run.run_id)}"><span class="history-icon">${icon(run.status === 'COMPLETED' ? 'check' : 'triangle-alert')}</span><span class="history-content"><span class="history-name">${escapeHtml((run.state && run.state.summary) || run.run_id)}</span><span class="history-meta"><span class="mini-status ${run.status === 'COMPLETED' ? 'completed' : 'failed'}"></span>${escapeHtml(run.status)} · ${escapeHtml(clockTime(run.stopped_at))}</span></span></button>`);
@@ -521,6 +552,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('bottomInput').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); submitTask(event.target.value); } });
   $('detailButton').addEventListener('click', openDetail);
   $('settingsButton').addEventListener('click', () => $('settingsModal').showModal());
+  $('clearSessionButton').addEventListener('click', clearSessionMemory);
   $('clearHistory').addEventListener('click', resetWorkspace);
   document.querySelectorAll('.nav-item').forEach((item) => item.addEventListener('click', () => switchView(item.dataset.view)));
   document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => $(button.dataset.close).close()));

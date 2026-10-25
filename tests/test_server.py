@@ -446,5 +446,66 @@ class ServerResumeTests(ServerTestBase):
         self.assertEqual(status, 200)
 
 
+class ServerSessionTests(ServerTestBase):
+    def test_session_memory_accumulates_across_runs(self) -> None:
+        status, first = self.post_json(
+            "/api/runs",
+            {"agent": "workbench", "input": {"task": "会话任务一"}, "session_id": "sess-demo"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(first["run"]["state"]["session_task_count"], 1)
+        self.assertIn("本会话第 1 个任务", first["run"]["state"]["summary"])
+        self.assertEqual(first["session"]["id"], "sess-demo")
+
+        status, second = self.post_json(
+            "/api/runs",
+            {"agent": "workbench", "input": {"task": "会话任务二"}, "session_id": "sess-demo"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(second["run"]["state"]["session_task_count"], 2)
+
+        status, payload = self.request("GET", "/api/sessions/sess-demo")
+        self.assertEqual(status, 200)
+        memory = payload["memory"]
+        self.assertEqual(memory["last_task"], "会话任务二")
+        self.assertEqual(len(memory["processed_tasks"]), 2)
+
+        status, standalone = self.post_json(
+            "/api/runs", {"agent": "workbench", "input": {"task": "无会话任务"}},
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn("session_task_count", standalone["run"]["state"])
+        self.assertNotIn("本会话", standalone["run"]["state"]["summary"])
+        self.assertNotIn("session", standalone)
+
+    def test_session_listing_and_clear(self) -> None:
+        self.post_json(
+            "/api/runs",
+            {"agent": "workbench", "input": {"task": "会话记录"}, "session_id": "sess-list"},
+        )
+        status, payload = self.request("GET", "/api/sessions")
+        self.assertEqual(status, 200)
+        self.assertIn("sess-list", payload["sessions"])
+
+        status, payload = self.request("DELETE", "/api/sessions/sess-list")
+        self.assertEqual(status, 200)
+        self.assertIs(payload["cleared"], True)
+        status, _ = self.request("GET", "/api/sessions/sess-list")
+        self.assertEqual(status, 404)
+        status, _ = self.request("DELETE", "/api/sessions/sess-list")
+        self.assertEqual(status, 404)
+
+    def test_session_request_validation(self) -> None:
+        status, body = self.post_json(
+            "/api/runs",
+            {"agent": "workbench", "input": {"task": "x"}, "session_id": "bad id!"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "INVALID_SESSION")
+        status, body = self.request("GET", "/api/sessions/missing-session")
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"]["code"], "UNKNOWN_SESSION")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -165,12 +165,13 @@
 - [x] 前端恢复闭环:Agent 选择器、恢复按钮(可恢复的终态运行可见)、prompt 输入状态修正 JSON、恢复结果直接渲染(再阻断时按钮保留)。
 - [x] 修复:`clockTime` 对非法日期回退为 `--:--`,停止节点字段改用 trace 末事件时间,详情面板"停止于"直接展示 `stopped_at` 语义。
 - [x] 服务端 21 项测试(新增恢复套件:状态修正恢复、空修正再阻断且保持可恢复、COMPLETED/无检查点拒绝、请求校验)。
+- [x] 会话记忆:`SessionManager` 维护每会话 `InMemoryMemory`;注册表工厂化(`register_factory`/`build`),创建运行时按会话绑定记忆构建 Agent 实例;`POST /api/runs` 携带 `session_id`,运行负载与 `GET /api/runs/{id}` 返回记忆快照;`GET/DELETE /api/sessions/{id}` 查看/清除。工作台 Agent 用记忆记录已处理任务并在摘要标注会话序号;`InMemoryMemory.snapshot()` 支持内省。前端自动生成并持久化会话 ID,详情弹窗展示会话记忆,设置页可清除;Agent 下拉默认优先 workbench 并记住选择。
 - [x] 测试:节点库 12 项(含示例文件端到端、自定义工厂注册)、服务端 17 项(含 SSE 推流、SSE 404、配置装载与非法配置拒绝)。
 - [x] 端到端:curl 验证配置 Agent 装载与 SSE 回放;内置浏览器验证 EventSource 全流程。
 
 ### Latest Verification
 
-`python -m unittest discover -s tests -q` 221 passed(170 基线 + Agent 外壳 18 + HTTP 服务 21 + 节点库 12)。
+`python -m unittest discover -s tests -q` 225 passed(170 基线 + Agent 外壳 19 + HTTP 服务 24 + 节点库 12)。
 
 ### Known Limits
 

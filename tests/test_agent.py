@@ -265,6 +265,16 @@ class InMemoryMemoryTests(unittest.TestCase):
         value["count"] = 99
         self.assertEqual(memory.read("nested"), {"count": 1})
 
+    def test_snapshot_returns_isolated_copy(self) -> None:
+        memory = InMemoryMemory({"a": {"count": 1}})
+        memory.write("b", ["x"])
+        snapshot = memory.snapshot()
+        self.assertEqual(snapshot, {"a": {"count": 1}, "b": ["x"]})
+        snapshot["a"]["count"] = 99
+        snapshot["b"].append("y")
+        self.assertEqual(memory.read("a"), {"count": 1})
+        self.assertEqual(memory.read("b"), ["x"])
+
     def test_rejects_invalid_keys(self) -> None:
         memory = InMemoryMemory()
         for key in ("", "   ", None, 7):
