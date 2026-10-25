@@ -5,7 +5,7 @@ try:
 
     __version__ = _package_version("agent-core")
 except Exception:  # pragma: no cover - package not installed (repo checkout)
-    __version__ = "0.3.0"
+    __version__ = "0.4.0"
 
 from .persistence import RunStore
 from .runtime import RunConflictError, RunContext, RunResult, RunStatus, Step, StepOutcome, StepStatus, TraceEvent, WorkflowRunner
