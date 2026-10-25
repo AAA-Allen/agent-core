@@ -101,7 +101,7 @@ class CxrBridgeTests(unittest.TestCase):
         )
 
     def test_review_agent_delegates_and_reports(self) -> None:
-        result = self.build_agent().run({"image_path": str(self.image)})
+        result = self.build_agent().run({"task": str(self.image)})
         self.assertEqual(result.status, RunStatus.COMPLETED)
         cxr = result.state["cxr"]
         self.assertEqual(cxr["finding"], "Cardiomegaly; Pleural Effusion")
@@ -116,19 +116,19 @@ class CxrBridgeTests(unittest.TestCase):
     def test_missing_capability_blocks(self) -> None:
         config = json.loads(json.dumps(CXR_REVIEW_CONFIG))
         config["nodes"][1]["params"].pop("capabilities")
-        result = self.build_agent(config).run({"image_path": str(self.image)})
+        result = self.build_agent(config).run({"task": str(self.image)})
         self.assertEqual(result.status, RunStatus.BLOCKED)
         self.assertEqual(result.reason_code, "CAPABILITY_DENIED")
         self.assertEqual(self.fake.requests, [])
 
     def test_collapse_gate_surfaces_as_failure(self) -> None:
         self.fake.status = 422
-        result = self.build_agent().run({"image_path": str(self.image)})
+        result = self.build_agent().run({"task": str(self.image)})
         self.assertEqual(result.status, RunStatus.FAILED)
         self.assertEqual(result.reason_code, "CXR_SERVICE_REJECTED")
 
     def test_missing_image_fails_without_service_call(self) -> None:
-        result = self.build_agent().run({"image_path": str(Path(self._tmp.name) / "ghost.png")})
+        result = self.build_agent().run({"task": str(Path(self._tmp.name) / "ghost.png")})
         self.assertEqual(result.status, RunStatus.FAILED)
         self.assertEqual(result.reason_code, "IMAGE_NOT_FOUND")
         self.assertEqual(self.fake.requests, [])

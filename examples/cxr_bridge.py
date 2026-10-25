@@ -46,12 +46,12 @@ CXR_REVIEW_CONFIG = {
     "entry": "intake",
     "nodes": [
         {"id": "intake", "type": "validate_input",
-         "params": {"field": "image_path", "blocked_reason": "EMPTY_IMAGE_PATH", "route": "analyze"}},
+         "params": {"field": "task", "blocked_reason": "EMPTY_IMAGE_PATH", "route": "analyze"}},
         {"id": "analyze", "type": "tool",
          "params": {
              "name": "cxr_analyze",
              "capabilities": ["cxr_inference"],
-             "arguments": {"image_path": "{image_path}"},
+             "arguments": {"image_path": "{task}"},
              "output_key": "cxr",
              "route": "report",
          }},
@@ -165,8 +165,11 @@ def main() -> int:
         host=args.host, port=args.port, store_dir=args.store_dir,
         frontend_dir=args.frontend_dir, runtime=runtime,
     )
-    register_agents_from_config(
-        CXR_REVIEW_CONFIG, server.registry, runtime=runtime, tools=tools,
+    server.registry.register_factory(
+        "cxr-reviewer",
+        lambda memory=None: build_agent_from_config(
+            CXR_REVIEW_CONFIG, runtime=runtime, tools=tools, memory=memory,
+        ),
     )
     import logging
 

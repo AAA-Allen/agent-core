@@ -283,3 +283,7 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 264 passed。
+
+### 真实管线验证(2026-10-25 夜)
+
+用真实 CXR-MARS 完成端到端:导出 cxr14-ft bundle(回读自校验零差异)→ 真实服务(8300,14 类 ConvNeXt,宏 AUC 0.8146)→ cxr_bridge(8766)→ 真实胸片 `00000001_000.png` 经 agent-core 图执行、能力门控、multipart 上传到达真实模型,返回 `Cardiomegaly; Effusion; Infiltration`(塌陷余量 0.077,真实信号);工作台 UI 选择 cxr-reviewer、粘贴图像路径即可驱动全程(截图留证)。修复:桥接启动误将 dict 传给路径参数(改为注册工厂);审阅 Agent 输入字段对齐工作台 `task` 约定。CXR-MARS 的许可边界(像素不出本机、仅回环)在桥接下原样保持——图像只在 127.0.0.1 内流转。
