@@ -1,6 +1,11 @@
 """Domain-neutral agent workflow runtime."""
 
-__version__ = "0.1.1"
+try:
+    from importlib.metadata import version as _package_version
+
+    __version__ = _package_version("agent-core")
+except Exception:  # pragma: no cover - package not installed (repo checkout)
+    __version__ = "0.2.0"
 
 from .persistence import RunStore
 from .runtime import RunContext, RunResult, RunStatus, Step, StepOutcome, StepStatus, TraceEvent, WorkflowRunner
