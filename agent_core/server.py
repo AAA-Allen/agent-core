@@ -185,7 +185,7 @@ def load_agents_from_config(
     return agents
 
 
-def _result_payload(result: Any) -> dict[str, Any]:
+def _result_payload(result: Any, *, resumable: bool = False) -> dict[str, Any]:
     """Serialize a RunResult with the same shapes the RunStore persists."""
     return {
         "run_id": result.run_id,
@@ -199,6 +199,7 @@ def _result_payload(result: Any) -> dict[str, Any]:
         "lifecycle_events": [
             _lifecycle_event_to_dict(event) for event in result.lifecycle_events
         ],
+        "resumable": resumable,
     }
 
 
@@ -237,7 +238,7 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
     def _send_error_json(self, error: ApiError) -> None:
         self._send_json(error.status, {"error": {"code": error.code, "message": error.message}})
 
-    def _read_json_object(self) -> dict[str, Any]:
+    def _read_json_object(self, *, allow_empty: bool = False) -> dict[str, Any]:
         length_header = self.headers.get("Content-Length")
         try:
             length = int(length_header or "0")
@@ -247,6 +248,8 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "BODY_TOO_LARGE", "request body is too large")
         raw = self.rfile.read(length) if length else b""
         if not raw:
+            if allow_empty:
+                return {}
             raise ApiError(HTTPStatus.BAD_REQUEST, "EMPTY_BODY", "request body must be a JSON object")
         try:
             payload = json.loads(raw.decode("utf-8"))
@@ -293,6 +296,8 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                 self._handle_create_run()
             elif (match := _RUNS_PATH.match(path)) is not None and match.group(2) == "/cancel":
                 self._handle_cancel(match.group(1))
+            elif (match := _RUNS_PATH.match(path)) is not None and match.group(2) == "/resume":
+                self._handle_resume(match.group(1))
             else:
                 raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"unknown path: {path}")
         except ApiError as error:
@@ -335,17 +340,25 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
         if agent is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_AGENT", f"unknown agent: {agent_name}")
         if wait:
+            from uuid import uuid4
+
+            if run_id is None:
+                run_id = uuid4().hex
+            self.server.record_run_agent(run_id, agent_name)  # type: ignore[attr-defined]
             try:
                 result = agent.run(input_data, run_id=run_id).run
             except TypeError as exc:
                 raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_INPUT", str(exc))
             except ValueError as exc:
                 raise self._run_conflict_error(exc)
-            self._send_json(HTTPStatus.OK, {"run": _result_payload(result)})
+            self._send_json(HTTPStatus.OK, {
+                "run": _result_payload(result, resumable=self._is_resumable(result)),
+            })
             return
         if run_id is None:
             from uuid import uuid4
             run_id = uuid4().hex
+        self.server.record_run_agent(run_id, agent_name)  # type: ignore[attr-defined]
         if not self.server.track_active(run_id):  # type: ignore[attr-defined]
             raise ApiError(HTTPStatus.CONFLICT, "RUN_ALREADY_ACTIVE", f"run_id is already executing: {run_id}")
         try:
@@ -369,6 +382,10 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             return ApiError(HTTPStatus.CONFLICT, "RUN_ALREADY_ACTIVE", message)
         if "already has a" in message:
             return ApiError(HTTPStatus.CONFLICT, "RUN_ID_ALREADY_USED", message)
+        if "cannot resume" in message:
+            return ApiError(HTTPStatus.CONFLICT, "NOT_RESUMABLE", message)
+        if "does not match" in message or "does not exist" in message or "no next_node" in message:
+            return ApiError(HTTPStatus.CONFLICT, "CHECKPOINT_INCOMPATIBLE", message)
         return ApiError(HTTPStatus.BAD_REQUEST, "INVALID_RUN", message)
 
     def _execute_async_run(self, agent: Agent, input_data: dict[str, Any], run_id: str) -> None:
@@ -385,6 +402,18 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             "active": self.server.active_run_ids(),  # type: ignore[attr-defined]
         })
 
+    def _is_resumable(self, result: Any) -> bool:
+        """A run is resumable when it failed or blocked past its first boundary."""
+        if result.status.value not in ("BLOCKED", "FAILED"):
+            return False
+        if self.server.checkpoint_store is None:  # type: ignore[attr-defined]
+            return False
+        try:
+            checkpoint = self.server.checkpoint_store.load(result.run_id)  # type: ignore[attr-defined]
+        except ValueError:
+            return False
+        return checkpoint is not None and checkpoint.next_node is not None
+
     def _handle_get_run(self, run_id: str) -> None:
         try:
             result = self.store.load(run_id)
@@ -392,7 +421,61 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             raise ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, "INVALID_RUN_RECORD", str(exc))
         if result is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_RUN", f"unknown run: {run_id}")
-        self._send_json(HTTPStatus.OK, {"run": _result_payload(result)})
+        self._send_json(HTTPStatus.OK, {
+            "run": _result_payload(result, resumable=self._is_resumable(result)),
+        })
+
+    def _handle_resume(self, run_id: str) -> None:
+        from dataclasses import replace
+
+        payload = self._read_json_object(allow_empty=True)
+        state_updates = payload.get("state_updates", {})
+        if not isinstance(state_updates, dict):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_STATE_UPDATES", "'state_updates' must be an object")
+        try:
+            status = self.runtime.get_status(run_id)
+        except ValueError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_RUN_ID", str(exc))
+        if status is None:
+            raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_RUN", f"unknown run: {run_id}")
+        agent_name = self.server.agent_for_run(run_id)  # type: ignore[attr-defined]
+        if agent_name is None:
+            raise ApiError(HTTPStatus.NOT_FOUND, "RUN_AGENT_UNKNOWN", f"no registered agent for run: {run_id}")
+        agent = self.registry.get(agent_name)
+        if agent is None:
+            raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_AGENT", f"unknown agent: {agent_name}")
+        if status.value in ("RUNNING", "PENDING"):
+            raise ApiError(HTTPStatus.CONFLICT, "RUN_ALREADY_ACTIVE", f"run is already executing: {run_id}")
+        if status.value not in ("BLOCKED", "FAILED"):
+            raise ApiError(HTTPStatus.CONFLICT, "NOT_RESUMABLE", f"run is not resumable from status: {status.value}")
+        if self.server.checkpoint_store is None:  # type: ignore[attr-defined]
+            raise ApiError(HTTPStatus.CONFLICT, "NOT_RESUMABLE", "server has no checkpoint store")
+        try:
+            checkpoint = self.server.checkpoint_store.load(run_id)
+        except ValueError as exc:
+            raise ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, "INVALID_CHECKPOINT", str(exc))
+        if checkpoint is None or checkpoint.next_node is None:
+            raise ApiError(HTTPStatus.CONFLICT, "NOT_RESUMABLE", "run has no resumable checkpoint boundary")
+        if state_updates:
+            merged = dict(checkpoint.state)
+            merged.update(state_updates)
+            from .runtime import _json_snapshot as _snapshot
+
+            try:
+                merged = _snapshot(merged)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_STATE_UPDATES", f"state updates must be JSON-safe: {exc}")
+            checkpoint = replace(
+                checkpoint, state=merged, state_version=checkpoint.state_version + 1,
+            )
+        try:
+            result = self.runtime.resume(agent.graph, checkpoint)
+        except ValueError as exc:
+            raise self._run_conflict_error(exc)
+        self._send_json(HTTPStatus.OK, {
+            "run": _result_payload(result, resumable=self._is_resumable(result)),
+            "state_updates_applied": bool(state_updates),
+        })
 
     def _handle_run_status(self, run_id: str) -> None:
         try:
@@ -523,14 +606,18 @@ class AgentServer(ThreadingHTTPServer):
         registry: AgentRegistry,
         store: RunStore,
         frontend_dir: Path | None,
+        checkpoint_store: Any = None,
     ) -> None:
         super().__init__(address, RuntimeAPIHandler)
         self.runtime = runtime
         self.registry = registry
         self.store = store
         self.frontend_dir = frontend_dir
+        self.checkpoint_store = checkpoint_store
         self._active_runs: set[str] = set()
         self._active_lock = threading.Lock()
+        self._run_agents: dict[str, str] = {}
+        self._run_agents_lock = threading.Lock()
 
     def track_active(self, run_id: str) -> bool:
         """Claim a run_id for async execution; False when already claimed."""
@@ -548,19 +635,35 @@ class AgentServer(ThreadingHTTPServer):
         with self._active_lock:
             return sorted(self._active_runs)
 
+    def record_run_agent(self, run_id: str, agent_name: str) -> None:
+        """Remember which agent executed a run so resume can find its graph."""
+        with self._run_agents_lock:
+            self._run_agents[run_id] = agent_name
+
+    def agent_for_run(self, run_id: str) -> str | None:
+        with self._run_agents_lock:
+            return self._run_agents.get(run_id)
+
 
 def create_server(
     *,
     host: str = "127.0.0.1",
     port: int = 8000,
     store_dir: str | Path = "outputs/server_runs",
+    checkpoint_dir: str | Path | None = None,
     frontend_dir: str | Path | None = None,
     runtime: Runtime | None = None,
     registry: AgentRegistry | None = None,
 ) -> AgentServer:
     """Assemble a server with a shared Runtime, RunStore and agent registry."""
     store = RunStore(store_dir)
-    runtime = runtime or Runtime(store=store)
+    if checkpoint_dir is None:
+        checkpoint_dir = Path(store_dir).parent / "checkpoints"
+    from .checkpoint import FileCheckpointStore
+
+    checkpoint_store = FileCheckpointStore(checkpoint_dir)
+    if runtime is None:
+        runtime = Runtime(store=store, checkpoint_store=checkpoint_store)
     if registry is None:
         registry = build_default_registry(runtime=runtime)
     return AgentServer(
@@ -569,6 +672,7 @@ def create_server(
         registry=registry,
         store=store,
         frontend_dir=Path(frontend_dir) if frontend_dir is not None else _default_frontend_dir(),
+        checkpoint_store=checkpoint_store,
     )
 
 
@@ -605,8 +709,8 @@ def main(argv: list[str] | None = None) -> int:
         help="directory with the static frontend (default: ./frontend, then the repo checkout)",
     )
     parser.add_argument(
-        "--config", default=None,
-        help="JSON file with declarative agent configs to load at startup",
+        "--config", default=None, action="append",
+        help="JSON file with declarative agent configs to load at startup (repeatable)",
     )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -615,13 +719,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.config:
         try:
-            for agent in load_agents_from_config(args.config, runtime=server.runtime):
-                server.registry.register(agent)
+            for config_path in args.config:
+                for agent in load_agents_from_config(config_path, runtime=server.runtime):
+                    server.registry.register(agent)
+                logger.info("loaded agents from %s", config_path)
         except (OSError, ValueError, TypeError) as exc:
-            logger.error("failed to load agent config %s: %s", args.config, exc)
+            logger.error("failed to load agent config: %s", exc)
             server.server_close()
             return 2
-        logger.info("loaded agents from %s", args.config)
     bound_host, bound_port = server.server_address[:2]
     logger.info("agent-core server listening on http://%s:%s", bound_host, bound_port)
     logger.info("agents: %s", ", ".join(server.registry.names()))

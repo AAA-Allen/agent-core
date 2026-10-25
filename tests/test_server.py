@@ -361,5 +361,83 @@ class ServerLifecycleTests(ServerTestBase):
         self.assertEqual(self._poll_until_terminal("async-cancel"), "CANCELED")
 
 
+class ServerResumeTests(ServerTestBase):
+    def setUp(self) -> None:
+        super().setUp()
+        from agent_core.server import load_agents_from_config
+
+        for agent in load_agents_from_config("examples/recovery_agent.json", runtime=self.server.runtime):
+            self.server.registry.register(agent)
+
+    def test_blocked_run_resumes_with_state_updates(self) -> None:
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "recovery-router", "input": {"task": "紧急修复线上问题"}},
+        )
+        self.assertEqual(status, 200)
+        run = payload["run"]
+        self.assertEqual(run["status"], "BLOCKED")
+        self.assertEqual(run["reason_code"], "ROUTE_UNRESOLVED")
+        self.assertIs(run["resumable"], True)
+
+        status, payload = self.request(
+            "POST", f"/api/runs/{run['run_id']}/resume",
+            json.dumps({"state_updates": {"priority": "high"}}),
+        )
+        self.assertEqual(status, 200)
+        resumed = payload["run"]
+        self.assertEqual(resumed["status"], "COMPLETED")
+        self.assertEqual(resumed["state"]["outcome"], "加急通道处理:紧急修复线上问题")
+        self.assertIs(payload["state_updates_applied"], True)
+        lifecycle_types = [event["event_type"] for event in resumed["lifecycle_events"]]
+        self.assertIn("run.resumed", lifecycle_types)
+
+    def test_resume_without_updates_reblocks_and_stays_resumable(self) -> None:
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "recovery-router", "input": {"task": "普通任务"}},
+        )
+        run = payload["run"]
+        self.assertEqual(run["status"], "BLOCKED")
+        status, payload = self.request("POST", f"/api/runs/{run['run_id']}/resume", json.dumps({}))
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["run"]["status"], "BLOCKED")
+        self.assertIs(payload["run"]["resumable"], True)
+
+    def test_resume_rejects_unresumable_runs(self) -> None:
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "workbench", "input": {"task": "正常任务"}},
+        )
+        run_id = payload["run"]["run_id"]
+        status, body = self.request("POST", f"/api/runs/{run_id}/resume", json.dumps({}))
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["code"], "NOT_RESUMABLE")
+
+        status, payload = self.post_json("/api/runs", {"agent": "workbench", "input": {}})
+        run_id = payload["run"]["run_id"]
+        self.assertIs(payload["run"]["resumable"], False)
+        status, body = self.request("POST", f"/api/runs/{run_id}/resume", json.dumps({}))
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["code"], "NOT_RESUMABLE")
+
+    def test_resume_validates_request(self) -> None:
+        status, body = self.request("POST", "/api/runs/missing-run/resume", json.dumps({}))
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"]["code"], "UNKNOWN_RUN")
+
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "recovery-router", "input": {"task": "待恢复任务"}},
+        )
+        run_id = payload["run"]["run_id"]
+        status, body = self.request(
+            "POST", f"/api/runs/{run_id}/resume", json.dumps({"state_updates": "high"}),
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "INVALID_STATE_UPDATES")
+        status, body = self.request(
+            "POST", f"/api/runs/{run_id}/resume",
+            json.dumps({"state_updates": {"priority": {"nested": "ok"}}}),
+        )
+        self.assertEqual(status, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

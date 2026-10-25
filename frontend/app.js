@@ -5,7 +5,12 @@ const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'BLOCKED', 'CANCELED'];
 const state = { tasks: [], activeId: null, running: false, view: 'tasks', live: false };
 const $ = (id) => document.getElementById(id);
 const nowTime = () => new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date());
-const clockTime = (iso) => iso ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(iso)) : '--:--';
+const clockTime = (iso) => {
+  if (!iso) return '--:--';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '--:--';
+  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(date);
+};
 const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 function icon(name) { return `<i data-lucide="${name}"></i>`; }
@@ -49,12 +54,23 @@ async function apiFetch(path, options = {}, timeoutMs = 4000) {
   } finally { window.clearTimeout(timer); }
 }
 
+async function populateAgentSelect() {
+  const select = $('agentSelect');
+  if (!select) return;
+  try {
+    const payload = await apiFetch('/api/agents', {}, 3000);
+    select.innerHTML = payload.agents.map((agent) => `<option value="${escapeHtml(agent.name)}">${escapeHtml(agent.name)}</option>`).join('');
+    if (!payload.agents.some((agent) => agent.name === AGENT_NAME)) select.value = payload.agents[0].name;
+  } catch { select.innerHTML = `<option value="${AGENT_NAME}">${AGENT_NAME}</option>`; }
+}
+
 async function detectMode() {
   try {
     await apiFetch('/api/health', {}, 1500);
     state.live = true;
   } catch { state.live = false; }
   updateModeUi();
+  if (state.live) populateAgentSelect();
 }
 
 function updateModeUi() {
@@ -131,7 +147,7 @@ function runTimeline(run) {
     desc: failed ? `原因码 ${run.reason_code || run.status}` : '所有步骤已完成，结果已就绪。',
     marker: failed ? 'triangle-alert' : 'check',
     state: failed ? 'failed' : 'done',
-    time: clockTime(run.stopped_at),
+    time: clockTime(final && final.started_at),
   });
   return steps;
 }
@@ -154,6 +170,7 @@ function renderTaskView(task) {
   $('statePill').className = `state-pill ${pillClass}`;
   $('statePill').textContent = pillText;
   updateCancelButton(task);
+  updateResumeButton(task);
   if (task.status === 'running' && task.mode === 'live') {
     $('timeline').innerHTML = timelineHtml(liveTimeline(task));
   } else if (task.mode === 'live' && task.run) {
@@ -178,6 +195,7 @@ function updateResult(task) {
   $('resultTitle').textContent = task.status === 'failed' ? '任务执行失败' : '任务已完成';
   $('resultSummary').textContent = task.summary;
   panel.querySelector('.result-icon').innerHTML = icon(task.status === 'failed' ? 'triangle-alert' : 'check');
+  updateResumeButton(task);
   refreshIcons();
 }
 
@@ -194,6 +212,52 @@ function updateCancelButton(task) {
     document.querySelector('.card-topline').appendChild(button);
   }
   refreshIcons();
+}
+
+function updateResumeButton(task) {
+  let button = $('resumeButton');
+  const show = task && task.mode === 'live' && task.status !== 'running' && !!task.run && task.run.resumable && state.live;
+  if (!show) { if (button) button.remove(); return; }
+  if (!button) {
+    button = document.createElement('button');
+    button.id = 'resumeButton';
+    button.className = 'resume-button';
+    button.innerHTML = `${icon('rotate-cw')}<span>恢复运行</span>`;
+    button.addEventListener('click', () => resumeTask(task));
+    document.querySelector('.card-topline').appendChild(button);
+  }
+  refreshIcons();
+}
+
+async function resumeTask(task) {
+  if (!task.run || !task.run.resumable || state.running) return;
+  let patch = {};
+  const raw = window.prompt('恢复运行:输入要合并进状态的对象(JSON),留空直接恢复。例如 {"priority": "high"}', '{}');
+  if (raw === null) return;
+  if (raw.trim()) {
+    try { patch = JSON.parse(raw); } catch { window.alert('JSON 解析失败,请输入合法的 JSON 对象。'); return; }
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) { window.alert('需要 JSON 对象,例如 {"priority": "high"}'); return; }
+  }
+  state.running = true;
+  task.status = 'running';
+  task.lifecycle = [];
+  selectTask(task.id);
+  try {
+    const payload = await apiFetch(`/api/runs/${task.id}/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state_updates: patch }),
+    }, 30000);
+    completeLiveTask(task, payload.run);
+  } catch (error) {
+    state.running = false;
+    if (error.code === 'UNKNOWN_RUN') { failTask(task, '服务端没有这条运行的记录。'); return; }
+    task.status = 'failed';
+    task.completedAt = nowTime();
+    task.summary = `恢复失败:${error.message}`;
+    persistHistory();
+    selectTask(task.id);
+  }
 }
 
 async function requestCancel() {
@@ -281,7 +345,7 @@ async function runLiveTask(task) {
     const start = await apiFetch('/api/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent: AGENT_NAME, input: { task: task.title }, wait: false }),
+      body: JSON.stringify({ agent: task.agent || AGENT_NAME, input: { task: task.title }, wait: false }),
     }, 8000);
     if (state.activeId === task.id) state.activeId = start.run_id;
     task.id = start.run_id;
@@ -312,7 +376,8 @@ function runDemoTask(task) {
 // ---------------------------------------------------------------- actions
 function submitTask(raw) {
   const text = raw.trim(); if (!text || state.running) return;
-  const task = { id: `pending-${Date.now().toString(36)}`, title: text, status: 'running', time: nowTime(), receivedAt: nowTime(), summary: '', mode: state.live ? 'live' : 'demo', run: null };
+  const agentName = ($('agentSelect') && $('agentSelect').value) || AGENT_NAME;
+  const task = { id: `pending-${Date.now().toString(36)}`, title: text, status: 'running', time: nowTime(), receivedAt: nowTime(), summary: '', mode: state.live ? 'live' : 'demo', agent: agentName, run: null };
   state.tasks.unshift(task); state.activeId = task.id; state.running = true;
   $('topInput').value = ''; $('bottomInput').value = '';
   selectTask(task.id); persistHistory();
@@ -329,7 +394,7 @@ function runInspectorBody(run) {
     <div class="detail-item"><span>运行 ID</span><strong>${escapeHtml(run.run_id)}</strong></div>
     <div class="detail-item"><span>状态</span><strong>${escapeHtml(run.status)}</strong></div>
     <div class="detail-item"><span>原因码</span><strong>${escapeHtml(run.reason_code || '—')}</strong></div>
-    <div class="detail-item"><span>结束时间</span><strong>${escapeHtml(run.stopped_at || '—')}</strong></div>
+    <div class="detail-item"><span>停止于</span><strong>${escapeHtml(run.stopped_at || '—')}</strong></div>
     <div class="detail-item"><span>模拟标记</span><strong>${run.simulated ? 'simulated' : '真实执行'}</strong></div>
     <div class="detail-item"><span>Trace 事件</span><strong>${run.trace.length} 条</strong></div>
   </div>
@@ -391,6 +456,7 @@ async function renderLogsView() {
   $('timeline').querySelectorAll('[data-run-id]').forEach((item) => item.addEventListener('click', () => openServerRunDetail(item.dataset.runId)));
   $('resultPanel').classList.add('hidden');
   updateCancelButton(null);
+  updateResumeButton(null);
   refreshIcons();
 }
 
@@ -421,6 +487,7 @@ function resetWorkspace() {
   $('timeline').innerHTML = `<div class="timeline-empty">${icon('route')}<span>提交任务后，这里会显示执行过程</span></div>`;
   $('resultPanel').classList.add('hidden');
   updateCancelButton(null);
+  updateResumeButton(null);
   refreshIcons();
 }
 

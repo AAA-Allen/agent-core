@@ -1,0 +1,18 @@
+{
+  "name": "recovery-router",
+  "instructions": "演示中途阻断与显式恢复:根据 priority 字段路由,缺失时阻断,恢复时可注入修正。",
+  "description": "Recovery demo agent: blocks mid-graph until state is corrected via resume.",
+  "metadata": {"example": true},
+  "entry": "intake",
+  "nodes": [
+    {"id": "intake", "type": "validate_input", "params": {"field": "task", "blocked_reason": "EMPTY_TASK", "route": "route"}},
+    {"id": "route", "type": "route_by_value", "params": {"field": "priority", "routes": {"high": "fast", "normal": "standard"}}},
+    {"id": "fast", "type": "template", "params": {"updates": {"outcome": "加急通道处理:{task}"}}},
+    {"id": "standard", "type": "template", "params": {"updates": {"outcome": "标准通道处理:{task}"}}}
+  ],
+  "edges": [
+    {"source": "intake", "target": "route", "when": "route"},
+    {"source": "route", "target": "fast", "when": "fast"},
+    {"source": "route", "target": "standard", "when": "standard"}
+  ]
+}

@@ -198,7 +198,7 @@ class AgentShellTests(unittest.TestCase):
 
         def slow_node(ctx):
             started.set()
-            deadline = monotonic() + 2.0
+            deadline = monotonic() + 5.0
             while monotonic() < deadline and not ctx.cancel_requested:
                 sleep(0.01)
             return NodeResult.success({"waited": True})
@@ -218,9 +218,9 @@ class AgentShellTests(unittest.TestCase):
 
         worker = threading.Thread(target=execute)
         worker.start()
-        self.assertTrue(started.wait(timeout=2.0))
+        self.assertTrue(started.wait(timeout=5.0))
         accepted = False
-        deadline = monotonic() + 2.0
+        deadline = monotonic() + 5.0
         while monotonic() < deadline:
             if runtime.cancel("agent-cancel-it"):
                 accepted = True

@@ -21,3 +21,7 @@ body:not(.live) .status-dot{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158
 .topology-card code{font:500 11px/1.6 "DM Mono",monospace;color:#475569;word-break:break-all}
 .topology-edges{color:#94a3b8 !important;font-size:11px !important}
 .topology-count{font:500 11px/1 "DM Mono",monospace;color:#94a3b8}
+.agent-select{max-width:130px;padding:6px 8px;border-radius:8px;border:1px solid rgba(15,23,42,.12);background:#fff;font:500 12px/1 "Noto Sans SC",sans-serif;color:#334155;cursor:pointer}
+.resume-button{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:999px;border:1px solid rgba(79,70,229,.32);background:rgba(79,70,229,.08);color:#4338ca;font:600 12px/1 "Noto Sans SC",sans-serif;cursor:pointer;transition:background .15s ease;margin-right:8px}
+.resume-button:hover{background:rgba(79,70,229,.15)}
+.resume-button svg{width:14px;height:14px}
