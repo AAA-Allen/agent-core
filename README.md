@@ -203,6 +203,9 @@ python -m agent_core.server --host 127.0.0.1 --port 8000 --store-dir outputs/ser
 | `GET` | `/api/runs/{id}/events` | 生命周期事件序列 |
 | `GET` | `/api/runs/{id}/events/stream` | SSE 实时推送生命周期事件，终态以 `done` 帧收尾 |
 | `POST` | `/api/runs/{id}/cancel` | 发出协作式取消请求，返回是否受理 |
+| `POST` | `/api/runs/{id}/resume` | 从非终态 checkpoint 显式恢复；可选 `state_updates` 注入状态修正 |
+
+恢复语义与 Runtime 一致：只有 `BLOCKED`/`FAILED` 且存在未完成边界的运行可恢复；`state_updates` 合并进 checkpoint 状态并把 `state_version` 前移，恢复产生 `run.resumed` 生命周期事件。恢复后的 Trace 只覆盖恢复段；跨进程重启后的运行因缺少 Agent 归属记录暂不可通过 API 恢复。`examples/recovery_agent.json` 演示"中途阻断 → 注入修正 → 完成"的完整闭环。
 
 错误统一为 `{"error": {"code", "message"}}`：非法 JSON/输入返回 `400`，未知 Agent 或运行返回 `404`，重复占用 `run_id` 返回 `409`，路径穿越与不支持类型拒绝访问。静态文件只从 `frontend/` 目录解析。
 

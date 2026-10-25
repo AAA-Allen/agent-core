@@ -161,12 +161,16 @@
 - [x] SSE 端点 `GET /api/runs/{id}/events/stream`:回放已持久化事件 → 增量推送 → `done` 帧携带终态;心跳注释保活,断连与超时有界(15 分钟上限),未知运行返回 JSON 404。
 - [x] 前端 `watchLiveTask`:EventSource 消费 lifecycle 帧 + 去重,`done` 触发结果拉取;2 秒状态轮询看门狗兜底断连,保留离线演示模式。
 - [x] 工作台运行检查器:日志视图读取服务端持久化运行(最近 12 条,可点击),详情弹窗展示完整 Trace 表格、生命周期迁移表格与最终状态 JSON;设置页展示各 Agent 图拓扑(来自 `describe()`)。
+- [x] checkpoint 恢复 HTTP 入口:服务端默认挂 `FileCheckpointStore`,运行创建时记录 run→agent 归属;`POST /api/runs/{id}/resume` 校验可恢复性(BLOCKED/FAILED + 未完成边界),可选 `state_updates` 合并状态并把 state_version 前移;`resumable` 标志随运行负载返回。
+- [x] 前端恢复闭环:Agent 选择器、恢复按钮(可恢复的终态运行可见)、prompt 输入状态修正 JSON、恢复结果直接渲染(再阻断时按钮保留)。
+- [x] 修复:`clockTime` 对非法日期回退为 `--:--`,停止节点字段改用 trace 末事件时间,详情面板"停止于"直接展示 `stopped_at` 语义。
+- [x] 服务端 21 项测试(新增恢复套件:状态修正恢复、空修正再阻断且保持可恢复、COMPLETED/无检查点拒绝、请求校验)。
 - [x] 测试:节点库 12 项(含示例文件端到端、自定义工厂注册)、服务端 17 项(含 SSE 推流、SSE 404、配置装载与非法配置拒绝)。
 - [x] 端到端:curl 验证配置 Agent 装载与 SSE 回放;内置浏览器验证 EventSource 全流程。
 
 ### Latest Verification
 
-`python -m unittest discover -s tests -q` 217 passed(170 基线 + Agent 外壳 18 + HTTP 服务 17 + 节点库 12)。
+`python -m unittest discover -s tests -q` 225 passed(170 基线 + Agent 外壳 18 + HTTP 服务 21 + 节点库 12 + 其他 4)。
 
 ### Known Limits
 
