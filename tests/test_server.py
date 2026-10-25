@@ -695,7 +695,8 @@ class ServerRunIndexTests(ServerTestBase):
         run = payload["run"]
         self.assertEqual(run["status"], "BLOCKED")
 
-        # 模拟重启:同一存储目录上的全新服务实例,依赖持久化的归属索引
+        # 模拟重启:先停旧实例释放实例锁,同一存储目录上起全新服务
+        self._stop_server()
         restarted = create_server(
             port=0, store_dir=Path(self._tmp.name) / "runs", frontend_dir=None,
         )
@@ -854,6 +855,68 @@ class ServerConfigReloadTests(ServerTestBase):
             register_agents_from_config(config_path, self.server.registry, runtime=self.server.runtime)
         status, payload = self.request("GET", "/api/health")
         self.assertEqual(payload["agents"], ["workbench"])
+
+
+class ServerInstanceLockTests(ServerTestBase):
+    def test_second_instance_on_same_store_is_refused(self) -> None:
+        first = create_server(port=0, store_dir=Path(self._tmp.name) / "lock", frontend_dir=None)
+        try:
+            with self.assertRaises(RuntimeError):
+                create_server(port=0, store_dir=Path(self._tmp.name) / "lock", frontend_dir=None)
+        finally:
+            first.server_close()
+        # 释放后可再次启动
+        second = create_server(port=0, store_dir=Path(self._tmp.name) / "lock", frontend_dir=None)
+        second.server_close()
+
+    def test_hard_kill_releases_lock_and_store_survives(self) -> None:
+        import socket
+        import subprocess
+        import sys
+        import time
+        import urllib.request
+
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        store = Path(self._tmp.name) / "crash"
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "agent_core.server",
+             "--port", str(port), "--store-dir", str(store), "--frontend-dir", "frontend"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=".",
+        )
+        try:
+            healthy = False
+            for _ in range(60):
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1):
+                        healthy = True
+                        break
+                except Exception:
+                    time.sleep(0.2)
+            self.assertTrue(healthy, "subprocess server did not become healthy")
+
+            body = json.dumps({"agent": "workbench", "input": {"task": "崩溃前落盘"}}).encode("utf-8")
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/runs", data=body,
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                run = json.loads(response.read())["run"]
+                self.assertEqual(run["status"], "COMPLETED")
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
+
+        # 硬杀后:锁由 OS 自动释放,同目录可立即重启,记录与归属索引完好
+        restarted = create_server(port=0, store_dir=store, frontend_dir=None)
+        try:
+            status, payload = restarted.runtime.get_status(run["run_id"]), None
+            self.assertEqual(status.value, "COMPLETED")
+            self.assertEqual(restarted.agent_for_run(run["run_id"]), "workbench")
+        finally:
+            restarted.server_close()
 
 
 if __name__ == "__main__":

@@ -156,11 +156,17 @@ class RunResult:
     status: RunStatus
     outputs: Mapping[str, Any]
     trace: tuple[TraceEvent, ...]
-    stopped_at: str | None = None
+    stopped_at_node: str | None = None
     reason_code: str | None = None
     state: Mapping[str, Any] | None = None
     simulated: bool = False
     lifecycle_events: tuple[Any, ...] = ()
+
+    @property
+    def stopped_at(self) -> str | None:
+        """Deprecated alias for :attr:`stopped_at_node` (the node name where
+        the run stopped, not a timestamp)."""
+        return self.stopped_at_node
 
     def __post_init__(self) -> None:
         _validate_run_id(self.run_id)

@@ -280,7 +280,8 @@ python -m agent_core.server --host 127.0.0.1 --port 8000 --store-dir outputs/ser
 
 - 版本 0.x 阶段:**次版本之间允许破坏性变更**,每一条都记录在 CHANGELOG;补丁版本只修缺陷。
 - 公开契约以类型与原因码为准:**错误一律携带稳定的 `reason_code`**(如 `RUN_ALREADY_ACTIVE`、`CAPABILITY_DENIED`、`IMAGE_NOT_FOUND`),调用方依据原因码分支,**不要解析异常消息文本**——消息措辞随时会变。
-- 字段语义注记:`RunResult.stopped_at` 是**停止发生的节点名**(可为 `None`),不是时间戳;时间戳在 `TraceEvent.started_at`。计划在 0.3.0 更名为 `stopped_at_node` 并保留旧 JSON 记录的读取兼容。
+- 字段语义注记:`RunResult.stopped_at_node` 是**停止发生的节点名**(可为 `None`),不是时间戳;时间戳在 `TraceEvent.started_at`。旧字段名 `stopped_at` 保留为只读弃用别名,旧 JSON 记录的 `"stopped_at"` 键仍可读取。
+- 运行时与 HTTP 服务以**单实例**为约束:同一存储目录同时只允许一个服务实例(OS 级文件锁,进程死亡——包括硬杀——自动释放);第二个实例启动会得到明确报错。
 - `ModelAdapter.complete(messages)` 只声明它真正支持的能力;函数调用/结构化输出等能力会在实现后进入协议,不会先占签名。
 
 ## 许可

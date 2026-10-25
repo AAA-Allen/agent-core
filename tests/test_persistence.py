@@ -26,7 +26,7 @@ def _sample_result(run_id: str = "run-1") -> RunResult:
         trace=(
             TraceEvent(run_id, "step_a", "COMPLETED", "2026-10-19T00:00:00+00:00", 1.5, None, None),
         ),
-        stopped_at=None,
+        stopped_at_node=None,
         reason_code=None,
     )
 
@@ -151,6 +151,17 @@ class RunStoreTests(unittest.TestCase):
         self.store.save(_sample_result("run-a"))
         self.assertEqual(self.store.list_runs(), ["run-a", "run-b"])
 
+    def test_legacy_stopped_at_key_is_read_compatible(self) -> None:
+        self.store.save(_sample_result("legacy-run"))
+        record_path = self.store.directory / "legacy-run.json"
+        payload = json.loads(record_path.read_text(encoding="utf-8"))
+        payload["stopped_at"] = payload.pop("stopped_at_node")
+        payload["stopped_at"] = "step_a"
+        record_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        result = self.store.load("legacy-run")
+        self.assertEqual(result.stopped_at_node, "step_a")
+        self.assertEqual(result.stopped_at, "step_a")
+
     def test_save_overwrites_same_run_id(self) -> None:
         self.store.save(_sample_result("dup"))
         blocked = RunResult(
@@ -158,7 +169,7 @@ class RunStoreTests(unittest.TestCase):
             status=RunStatus.BLOCKED,
             outputs={},
             trace=(),
-            stopped_at="step_a",
+            stopped_at_node="step_a",
             reason_code="SOME_REASON",
         )
         self.store.save(blocked)
@@ -180,7 +191,7 @@ class RunStoreTests(unittest.TestCase):
                         "2026-10-19T00:00:00+00:00", 2.0, reason, "RuntimeError",
                     ),
                 ),
-                stopped_at=stopped,
+                stopped_at_node=stopped,
                 reason_code=reason,
             )
             self.store.save(result)

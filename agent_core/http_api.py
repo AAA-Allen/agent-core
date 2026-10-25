@@ -53,7 +53,7 @@ def _result_payload(result: Any, *, resumable: bool = False) -> dict[str, Any]:
         "run_id": result.run_id,
         "status": result.status.value,
         "reason_code": result.reason_code,
-        "stopped_at": result.stopped_at,
+        "stopped_at_node": result.stopped_at_node,
         "simulated": result.simulated,
         "outputs": result.outputs,
         "state": result.state,
@@ -391,7 +391,7 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                 "status": "UNREADABLE",
                 "reason_code": None,
                 "started_at": None,
-                "stopped_at": None,
+                "stopped_at_node": None,
                 "summary": None,
                 "simulated": False,
             }
@@ -401,7 +401,7 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             "status": result.status.value,
             "reason_code": result.reason_code,
             "started_at": result.trace[0].started_at if result.trace else None,
-            "stopped_at": result.stopped_at,
+            "stopped_at_node": result.stopped_at_node,
             "summary": state.get("summary") if isinstance(state, dict) else None,
             "simulated": result.simulated,
         }

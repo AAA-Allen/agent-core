@@ -322,6 +322,13 @@
   - `server.py`(316 行):AgentServer、create_server、CLI 入口、热重载守护、run 索引持久化——纯组合与生命周期。
 - [x] 拆分为纯搬移(脚本按行区间切分),唯一修正是 http_api 补 `threading` 导入;276 项回归双 runner 通过。
 
+## Session 2026-10-25(续十二):崩溃恢复实测与字段改名(批判偿还完结)
+
+- [x] `stopped_at` → `stopped_at_node`:字段改名(语义即"停止的节点名"),旧名保留为只读弃用别名(现有测试零改动通过);持久化写新键、读兼容旧记录 `stopped_at` 键(专门测试);HTTP 负载与前端同步,API 政策注记兑现。
+- [x] 单实例约束:`StoreInstanceLock`——存储目录级 OS 文件锁(POSIX flock / Windows msvcrt),进程退出(含硬杀)由 OS 自动释放,无陈旧锁文件问题;第二实例同目录启动被明确拒绝,释放后可重启。
+- [x] 真实崩溃 e2e:子进程起服务 → 健康检查 → 同步运行落盘 → `proc.kill()` 硬杀(锁仍持有)→ 同目录立即重启成功(锁自动释放)→ 记录与归属索引完好(COMPLETED、agent=workbench)。
+- [x] `test_resume_after_server_restart` 修正为真重启语义(先停旧实例再起新实例,由实例锁保证)。
+
 ### Latest Verification
 
-`python -m unittest discover -s tests -q` 276 passed。
+`python -m unittest discover -s tests -q` 279 passed,连续五轮稳定。

@@ -507,7 +507,7 @@ function runInspectorBody(run, session = null) {
     <div class="detail-item"><span>运行 ID</span><strong>${escapeHtml(run.run_id)}</strong></div>
     <div class="detail-item"><span>状态</span><strong>${escapeHtml(run.status)}</strong></div>
     <div class="detail-item"><span>原因码</span><strong>${escapeHtml(run.reason_code || '—')}</strong></div>
-    <div class="detail-item"><span>停止于</span><strong>${escapeHtml(run.stopped_at || '—')}</strong></div>
+    <div class="detail-item"><span>停止于</span><strong>${escapeHtml(run.stopped_at_node || '—')}</strong></div>
     <div class="detail-item"><span>模拟标记</span><strong>${run.simulated ? 'simulated' : '真实执行'}</strong></div>
     <div class="detail-item"><span>Trace 事件</span><strong>${run.trace.length} 条</strong></div>
   </div>

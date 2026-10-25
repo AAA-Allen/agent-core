@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -38,6 +39,60 @@ __all__ = [
 logger = logging.getLogger("agent_core.server")
 
 
+class StoreInstanceLock:
+    """Exclusive OS-level lock on a store directory; auto-released on death.
+
+    Uses ``fcntl.flock`` (POSIX) or ``msvcrt.locking`` (Windows) so the lock
+    disappears when the owning process exits — including a hard kill — which
+    a lockfile with O_EXCL cannot guarantee. Two server instances sharing
+    one store would race the run-index read-modify-write, so a second
+    instance is refused with an explicit error.
+    """
+
+    def __init__(self, store_dir: str | Path) -> None:
+        self.path = Path(store_dir) / ".server.lock"
+        self._handle = None
+
+    def acquire(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(self.path, "a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            handle.close()
+            raise RuntimeError(
+                f"another agent-core server instance is using {self.path.parent}"
+            ) from exc
+        self._handle = handle
+
+    def release(self) -> None:
+        if self._handle is None:
+            return
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                self._handle.seek(0)
+                msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            self._handle.close()
+            self._handle = None
+
+
 class AgentServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -61,6 +116,8 @@ class AgentServer(ThreadingHTTPServer):
         self.model = model
         self.sessions = SessionManager()
         self.run_index_path = store.directory / ".agent_index.json"
+        self._instance_lock = StoreInstanceLock(store.directory)
+        self._instance_lock.acquire()
         self._active_runs: set[str] = set()
         self._active_lock = threading.Lock()
         self._run_agents: dict[str, str] = {}
@@ -71,6 +128,10 @@ class AgentServer(ThreadingHTTPServer):
         self._summary_cache: dict[str, tuple[int | None, dict[str, Any]]] = {}
         self._summary_lock = threading.Lock()
         self._load_run_index()
+
+    def server_close(self) -> None:
+        super().server_close()
+        self._instance_lock.release()
 
     def track_active(self, run_id: str) -> bool:
         """Claim a run_id for async execution; False when already claimed."""
