@@ -252,21 +252,56 @@ function updateResumeButton(task) {
     button.id = 'resumeButton';
     button.className = 'resume-button';
     button.innerHTML = `${icon('rotate-cw')}<span>恢复运行</span>`;
-    button.addEventListener('click', () => resumeTask(task));
+    button.addEventListener('click', () => beginResume(task));
     document.querySelector('.card-topline').appendChild(button);
   }
   refreshIcons();
 }
 
-async function resumeTask(task) {
-  if (!task.run || !task.run.resumable || state.running) return;
-  let patch = {};
-  const raw = window.prompt('恢复运行:输入要合并进状态的对象(JSON),留空直接恢复。例如 {"priority": "high"}', '{}');
-  if (raw === null) return;
-  if (raw.trim()) {
-    try { patch = JSON.parse(raw); } catch { window.alert('JSON 解析失败,请输入合法的 JSON 对象。'); return; }
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) { window.alert('需要 JSON 对象,例如 {"priority": "high"}'); return; }
+let resumeContext = null;
+
+function shallowDiff(original, edited) {
+  const updates = {};
+  for (const key of Object.keys(edited)) {
+    if (JSON.stringify(original[key]) !== JSON.stringify(edited[key])) updates[key] = edited[key];
   }
+  return updates;
+}
+
+async function beginResume(task) {
+  if (!task.run || !task.run.resumable || state.running) return;
+  let checkpoint;
+  try {
+    const payload = await apiFetch(`/api/runs/${task.id}/checkpoint`, {}, 5000);
+    checkpoint = payload.checkpoint;
+  } catch (error) {
+    window.alert(`无法读取检查点:${error.message}`);
+    return;
+  }
+  resumeContext = { task, original: checkpoint.state && typeof checkpoint.state === 'object' ? checkpoint.state : {} };
+  $('resumeTitle').textContent = `恢复运行`;
+  $('resumeHint').textContent = `将从节点 ${checkpoint.next_node} 继续（状态版本 ${checkpoint.state_version}，已执行 ${checkpoint.step_count} 步）。检查点状态如下，可直接编辑；确认后仅提交修改过的顶层键。`;
+  $('resumeStateEditor').value = JSON.stringify(checkpoint.state || {}, null, 2);
+  $('resumeModal').showModal(); refreshIcons();
+}
+
+async function confirmResume() {
+  if (!resumeContext) return;
+  let edited;
+  try {
+    edited = JSON.parse($('resumeStateEditor').value);
+  } catch {
+    window.alert('状态不是合法 JSON,请修正后重试。');
+    return;
+  }
+  if (!edited || typeof edited !== 'object' || Array.isArray(edited)) {
+    window.alert('状态需要是 JSON 对象。');
+    return;
+  }
+  const updates = shallowDiff(resumeContext.original, edited);
+  const task = resumeContext.task;
+  resumeContext = null;
+  $('resumeModal').close();
   state.running = true;
   task.status = 'running';
   task.lifecycle = [];
@@ -275,7 +310,7 @@ async function resumeTask(task) {
     const payload = await apiFetch(`/api/runs/${task.id}/resume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state_updates: patch }),
+      body: JSON.stringify({ state_updates: updates }),
     }, 30000);
     completeLiveTask(task, payload.run, payload.session);
   } catch (error) {
@@ -571,6 +606,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('detailButton').addEventListener('click', openDetail);
   $('settingsButton').addEventListener('click', () => $('settingsModal').showModal());
   $('clearSessionButton').addEventListener('click', clearSessionMemory);
+  $('resumeConfirm').addEventListener('click', confirmResume);
+  $('resumeCancel').addEventListener('click', () => { resumeContext = null; $('resumeModal').close(); });
   $('clearHistory').addEventListener('click', resetWorkspace);
   document.querySelectorAll('.nav-item').forEach((item) => item.addEventListener('click', () => switchView(item.dataset.view)));
   document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => $(button.dataset.close).close()));

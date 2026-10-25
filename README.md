@@ -215,6 +215,7 @@ python -m agent_core.server --host 127.0.0.1 --port 8000 --store-dir outputs/ser
 | `GET` | `/api/sessions/{id}` | 会话记忆快照 |
 | `DELETE` | `/api/sessions/{id}` | 清除会话记忆 |
 | `POST` | `/api/runs/{id}/cancel` | 发出协作式取消请求，返回是否受理 |
+| `GET` | `/api/runs/{id}/checkpoint` | 检查点检查:恢复目标节点、状态、版本与步数 |
 | `POST` | `/api/runs/{id}/resume` | 从非终态 checkpoint 显式恢复；可选 `state_updates` 注入状态修正 |
 
 恢复语义与 Runtime 一致：只有 `BLOCKED`/`FAILED` 且存在未完成边界的运行可恢复；`state_updates` 合并进 checkpoint 状态并把 `state_version` 前移，恢复产生 `run.resumed` 生命周期事件。恢复后的 Trace 只覆盖恢复段。运行→Agent 的归属记录持久化在 `RunStore` 目录的 `.agent_index.json`(服务端簿记,不进入核心持久化模式),因此**服务重启后仍可恢复**;若索引不可读则回退为仅本进程可恢复。`examples/recovery_agent.json` 演示"中途阻断 → 注入修正 → 完成"的完整闭环。

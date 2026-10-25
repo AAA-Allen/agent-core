@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=0.2.0-r2" />
+    <link rel="stylesheet" href="./styles.css?v=0.2.0-r3" />
   </head>
   <body>
     <div class="app-shell">
@@ -75,8 +75,9 @@
     </div>
 
     <dialog class="modal" id="detailModal"><div class="modal-header"><div><span class="eyebrow">RESULT DETAIL</span><h2 id="modalTitle">任务详情</h2></div><button class="icon-button" data-close="detailModal" aria-label="关闭"><i data-lucide="x"></i></button></div><div class="modal-body" id="modalBody"></div></dialog>
+    <dialog class="modal" id="resumeModal"><div class="modal-header"><div><span class="eyebrow">RESUME RUN</span><h2 id="resumeTitle">恢复运行</h2></div><button class="icon-button" data-close="resumeModal" aria-label="关闭"><i data-lucide="x"></i></button></div><div class="modal-body"><p class="resume-hint" id="resumeHint"></p><textarea id="resumeStateEditor" class="state-editor" rows="12" spellcheck="false" aria-label="检查点状态"></textarea><div class="resume-actions"><button class="text-button" id="resumeCancel">取消</button><button class="primary-button" id="resumeConfirm"><span>恢复运行</span><i data-lucide="rotate-cw"></i></button></div></div></dialog>
     <dialog class="modal settings-modal" id="settingsModal"><div class="modal-header"><div><span class="eyebrow">PREFERENCES</span><h2>设置</h2></div><button class="icon-button" data-close="settingsModal" aria-label="关闭"><i data-lucide="x"></i></button></div><div class="settings-list"><div class="setting-row"><div><strong>演示模式</strong><span>使用本地流程预览 Agent 交互</span></div><label class="switch"><input type="checkbox" checked id="demoToggle" /><span></span></label></div><div class="setting-row"><div><strong>完成提示音</strong><span>任务完成时播放轻提示</span></div><label class="switch"><input type="checkbox" id="soundToggle" /><span></span></label></div><div class="setting-row"><div><strong>会话记忆</strong><span>Agent 跨任务记住的上下文,清除后从零开始</span></div><button class="text-button" id="clearSessionButton">清除</button></div><div class="setting-row"><div><strong>Agent 拓扑</strong><span>当前注册的 Agent 与执行图</span></div><span class="topology-count" id="topologyCount"></span></div><div id="agentTopology"></div><div class="settings-note"><i data-lucide="info"></i><span>运行 <code>python -m agent_core.server</code> 即可启动本地 Runtime API（默认 http://127.0.0.1:8000）。未连接服务时，本页自动进入离线演示模式。</span></div></div></dialog>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.js"></script>
-    <script src="./app.js?v=0.2.0-r2"></script>
+    <script src="./app.js?v=0.2.0-r3"></script>
   </body>
 </html>

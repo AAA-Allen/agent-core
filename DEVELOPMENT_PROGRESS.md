@@ -208,3 +208,16 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 237 passed(170 基线 + Agent 外壳 19 + HTTP 服务 26 + 节点库 12 + 契约 10)。
+
+## Session 2026-10-25(续四):CI 升级与结构化恢复
+
+### 已完成
+
+- [x] CI 工作流升级(既有 codex 版工作流之上):矩阵扩展到 Windows + Python 3.13(开发平台覆盖),补充 `pip install -e .` 安装验证与 pytest 双跑(`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`)。
+- [x] `GET /api/runs/{id}/checkpoint`:检查点检查端点——恢复目标节点、状态快照、状态版本与步数;未知检查点 404。
+- [x] 前端恢复从 `prompt()` 裸 JSON 升级为结构化对话框:预填检查点状态、展示恢复点/版本/步数、可编辑状态文本域,确认时前端做顶层浅 diff 只提交变更键;取消/关闭不产生请求。
+- [x] 资源版本串随内容推进(`?v=0.2.0-r3`)。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 238 passed(170 基线 + Agent 外壳 19 + HTTP 服务 27 + 节点库 12 + 契约 10)。

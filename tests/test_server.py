@@ -429,6 +429,22 @@ class ServerResumeTests(ServerTestBase):
         self.assertEqual(status, 409)
         self.assertEqual(body["error"]["code"], "NOT_RESUMABLE")
 
+    def test_checkpoint_inspection_endpoint(self) -> None:
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "recovery-router", "input": {"task": "待检查任务"}},
+        )
+        run_id = payload["run"]["run_id"]
+        status, payload = self.request("GET", f"/api/runs/{run_id}/checkpoint")
+        self.assertEqual(status, 200)
+        checkpoint = payload["checkpoint"]
+        self.assertEqual(checkpoint["next_node"], "route")
+        self.assertEqual(checkpoint["state"]["task"], "待检查任务")
+        self.assertEqual(payload["status"], "BLOCKED")
+
+        status, body = self.request("GET", "/api/runs/missing-run/checkpoint")
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"]["code"], "UNKNOWN_CHECKPOINT")
+
     def test_resume_validates_request(self) -> None:
         status, body = self.request("POST", "/api/runs/missing-run/resume", json.dumps({}))
         self.assertEqual(status, 404)

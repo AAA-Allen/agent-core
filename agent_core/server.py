@@ -386,6 +386,8 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                     self._handle_run_events(run_id)
                 elif suffix == "/events/stream":
                     self._handle_run_events_stream(run_id)
+                elif suffix == "/checkpoint":
+                    self._handle_get_checkpoint(run_id)
                 else:
                     raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"unknown path: {path}")
             elif path == "/api/sessions":
@@ -645,6 +647,26 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.OK, {
             "run": _result_payload(result, resumable=self._is_resumable(result)),
             **self._session_block(session_id),
+        })
+
+    def _handle_get_checkpoint(self, run_id: str) -> None:
+        if self.server.checkpoint_store is None:  # type: ignore[attr-defined]
+            raise ApiError(HTTPStatus.CONFLICT, "NOT_RESUMABLE", "server has no checkpoint store")
+        try:
+            checkpoint = self.server.checkpoint_store.load(run_id)
+        except ValueError as exc:
+            raise ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, "INVALID_CHECKPOINT", str(exc))
+        if checkpoint is None:
+            raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_CHECKPOINT", f"no checkpoint for run: {run_id}")
+        self._send_json(HTTPStatus.OK, {
+            "run_id": run_id,
+            "checkpoint": {
+                "next_node": checkpoint.next_node,
+                "state": checkpoint.state,
+                "state_version": checkpoint.state_version,
+                "step_count": checkpoint.step_count,
+            },
+            "status": (self.runtime.get_status(run_id).value if self.runtime.get_status(run_id) else None),
         })
 
     def _handle_resume(self, run_id: str) -> None:
