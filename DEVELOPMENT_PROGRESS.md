@@ -170,7 +170,7 @@
 
 ### Latest Verification
 
-`python -m unittest discover -s tests -q` 225 passed(170 基线 + Agent 外壳 18 + HTTP 服务 21 + 节点库 12 + 其他 4)。
+`python -m unittest discover -s tests -q` 221 passed(170 基线 + Agent 外壳 18 + HTTP 服务 21 + 节点库 12)。
 
 ### Known Limits
 
