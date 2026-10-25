@@ -11,7 +11,7 @@
 - **单实例约束**:存储目录级 OS 文件锁(flock/msvcrt,进程死亡自动释放),拒绝同目录第二服务实例;真实子进程硬杀 e2e 测试验证锁自动释放与记录完好。
 - **流式输出**:适配器可选 `complete_stream(messages, on_delta)` 约定(内置适配器已实现,标准库 SSE 解析);`llm` 节点优先流式、无则回退 `complete`;进程内 `TokenBus`(历史回放 + 容量上限)桥接节点与 SSE;`/events/stream` 新增 `token` 帧,工作台实时渲染。
 - **模型接入**:`agent_core.models.OpenAICompatibleModel`——纯标准库实现的 OpenAI 兼容 chat completions 适配器(单请求、不重试、失败带稳定原因码且不泄露密钥/载荷);`AGENT_MODEL_*` 环境变量配置(半配置视为未配置);声明式 `llm` 节点(模板提示 + fail-closed:未配置 BLOCKED、传输失败 FAILED 带原因码);服务端模型注入与 `/api/health` 的 `model_configured` 报告;`examples/assistant_agent.json`;本地假端点契约测试(不触网)。
-- **领域工具桥接**(`examples/cxr_bridge.py`):视觉/领域模型经 Tool 边界接入(能力门控 + 原因码透传);声明式 `tool` 节点 `capabilities` 参数显式授予权限;`--allow-root` 路径白名单。
+- **工具能力声明**:声明式 `tool` 节点新增 `capabilities` 参数,显式授予工具所需能力(未声明 → BLOCKED `CAPABILITY_DENIED`,绝不隐式授予);工具抛出携带 `reason_code` 属性的异常时原样透传为节点失败原因码。
 - **请求来源防护**:POST/DELETE 校验 Origin(localhost CSRF)与 Host(DNS rebinding),跨站请求 403;非浏览器客户端不受影响。
 - **结构化运行冲突**:`RunConflictError(reason_code)` 取代消息文本约定(`RUN_ALREADY_ACTIVE`/`RUN_ID_ALREADY_USED`/`CHECKPOINT_INCOMPATIBLE`),服务端表驱动映射。
 

@@ -208,16 +208,6 @@ fail-closed 语义:未绑定模型 → BLOCKED `MODEL_NOT_CONFIGURED`(不伪装)
 
 `examples/local_model.py` 是路径 3 的可运行示例(`python -m examples.local_model`),包含成功与失败契约两种形态;把它接到 HTTP 服务只需 `create_server(model=LocalTrainedModel())`。
 
-### 视觉 / 领域模型(CXR-MARS 案例)
-
-图像进、结构化概率出的模型(分类/检测/质检)**不是** ModelAdapter——那是对话形状的契约;正确的接入位置是**工具边界**:结构化参数进、结构化 JSON 出、能力显式授予、fail-closed。`examples/cxr_bridge.py` 演示把胸片多标签分析服务(CXR-MARS,`POST /api/predict`)接成一个 Agent 可委派的工具:
-
-```python
-tools = build_cxr_tools("http://127.0.0.1:8300")   # cxr_analyze 工具,要求 cxr_inference 能力
-```
-
-配套要点:声明式 `tool` 节点用 `capabilities` 参数显式授予能力(未声明 → BLOCKED `CAPABILITY_DENIED`,绝不隐式授予);工具抛出携带 `reason_code` 属性的异常时,该原因码会原样进入节点结果(领域失败不伪装、不被 `TOOL_EXCEPTION` 抹平);`python -m examples.cxr_bridge` 直接起一个挂载审阅 Agent 的完整服务。
-
 ## 声明式 Agent 装配
 
 `agent_core/nodes.py` 提供确定性节点工厂库，让 Agent 可以用 JSON 配置组装而不必写 Python:

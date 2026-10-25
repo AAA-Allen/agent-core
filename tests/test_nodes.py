@@ -292,6 +292,37 @@ class ConfigAssemblyTests(unittest.TestCase):
         self.assertEqual(result.status, RunStatus.FAILED)
         self.assertEqual(result.reason_code, "PROMPT_KEY_MISSING")
 
+    def test_tool_node_capabilities_must_be_declared(self) -> None:
+        registry = ToolRegistry()
+        registry.register(
+            Tool("guarded", lambda args: {"ok": True}, required_capabilities=frozenset({"restricted"}))
+        )
+        config = {
+            "name": "caller",
+            "entry": "call",
+            "nodes": [{"id": "call", "type": "tool", "params": {"name": "guarded", "arguments": {}}}],
+        }
+        # 未声明能力 → BLOCKED,工具未被调用
+        agent = build_agent_from_config(config, runtime=Runtime(), tools=registry)
+        result = agent.run({})
+        self.assertEqual(result.status, RunStatus.BLOCKED)
+        self.assertEqual(result.reason_code, "CAPABILITY_DENIED")
+        # 显式声明 → 成功
+        config["nodes"][0]["params"]["capabilities"] = ["restricted"]
+        agent = build_agent_from_config(config, runtime=Runtime(), tools=registry)
+        result = agent.run({})
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(result.state["guarded"], {"ok": True})
+        # 声明不覆盖所需能力 → 仍拒绝
+        config["nodes"][0]["params"]["capabilities"] = ["other"]
+        agent = build_agent_from_config(config, runtime=Runtime(), tools=registry)
+        result = agent.run({})
+        self.assertEqual(result.reason_code, "CAPABILITY_DENIED")
+        # 非法能力参数 → 装配期拒绝
+        config["nodes"][0]["params"]["capabilities"] = "restricted"
+        with self.assertRaises(ValueError):
+            build_agent_from_config(config, runtime=Runtime(), tools=registry)
+
     def test_example_config_file_runs_end_to_end(self) -> None:
         config = json.loads(Path("examples/support_agent.json").read_text(encoding="utf-8"))
         agent = build_agent_from_config(config, runtime=self.runtime, tools=demo_tools())

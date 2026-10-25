@@ -270,23 +270,16 @@
 
 `python -m unittest discover -s tests -q` 257 passed。
 
-## Session 2026-10-25(续八):CXR-MARS 领域模型接入(工具边界)
+## Session 2026-10-25(续八):工具能力声明与原因码透传
 
 ### 已完成
 
-- [x] 判定:CXR-MARS(胸片多标签分类,图像进/概率出)是**工具**而非 ModelAdapter——对话形状契约不适配视觉模型;接入位置为 Tool 边界。agent-core 正是 CXR-MARS `docs/19` S2/S3 未做的编排层。
-- [x] 声明式 `tool` 节点新增 `capabilities` 参数:配置显式声明授予的能力(frozenset 透传 `granted_capabilities`);未声明调用受限工具 → BLOCKED `CAPABILITY_DENIED`,能力绝不隐式授予。
+- [x] 声明式 `tool` 节点新增 `capabilities` 参数:配置显式声明授予的能力(frozenset 透传 `granted_capabilities`);未声明调用受限工具 → BLOCKED `CAPABILITY_DENIED`,能力绝不隐式授予;参数非法在装配期拒绝。
 - [x] Tool 边界原因码透传:工具抛出携带合法 `reason_code` 属性的异常时原样上报(领域失败不被 `TOOL_EXCEPTION` 抹平),与 ModelAdapter/llm 节点契约一致;空白原因码回退 TOOL_EXCEPTION。
-- [x] `examples/cxr_bridge.py`:`build_cxr_tools()` 桥接 CXR-MARS `POST /api/predict`(纯标准库 multipart 上传),整理输出(阳性标签/逐类概率/塌陷余量/延迟);`cxr-reviewer` 审阅 Agent 配置(校验→委派→汇总);`main()` 一键起完整服务。
-- [x] 假 CXR 服务测试 4 项(multipart 解析/塌陷门控 422 透传为 `CXR_SERVICE_REJECTED`/能力拒绝且不触服务/缺图 `IMAGE_NOT_FOUND`),全部不依赖真实模型。
 
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 264 passed。
-
-### 真实管线验证(2026-10-25 夜)
-
-用真实 CXR-MARS 完成端到端:导出 cxr14-ft bundle(回读自校验零差异)→ 真实服务(8300,14 类 ConvNeXt,宏 AUC 0.8146)→ cxr_bridge(8766)→ 真实胸片 `00000001_000.png` 经 agent-core 图执行、能力门控、multipart 上传到达真实模型,返回 `Cardiomegaly; Effusion; Infiltration`(塌陷余量 0.077,真实信号);工作台 UI 选择 cxr-reviewer、粘贴图像路径即可驱动全程(截图留证)。修复:桥接启动误将 dict 传给路径参数(改为注册工厂);审阅 Agent 输入字段对齐工作台 `task` 约定。CXR-MARS 的许可边界(像素不出本机、仅回环)在桥接下原样保持——图像只在 127.0.0.1 内流转。
 
 ## Session 2026-10-25(续九):批判偿还(第一批)
 
@@ -295,7 +288,6 @@
 - [x] 接口诚实:`ModelAdapter.complete` 移除从未实现的 `tools`/`context` 参数(签名收敛为 `complete(messages)`),接口不再声明未交付能力;示例与适配器同步。
 - [x] 结构化冲突:`RunConflictError(reason_code)`(ValueError 子类)取代消息文本约定,运行时三处冲突抛点改型;服务端错误映射表驱动(消灭 5 处字符串匹配),HTTP 原因码与之前完全一致(回归证明)。
 - [x] 请求来源防护:POST/DELETE 校验 Origin(localhost CSRF)与 Host(DNS rebinding),跨站 403 `FORBIDDEN_ORIGIN`/`FORBIDDEN_HOST`;同源与无 Origin(curl/SDK)放行。
-- [x] 工具路径白名单:`build_cxr_tools(allowed_roots=...)` 限制可读目录,越界 `IMAGE_PATH_FORBIDDEN` 且不触服务;桥接入口 `--allow-root`(可重复),未设置时显式警告。
 - [x] README 新增「API 兼容政策」:0.x 次版本允许破坏性变更(记录于 CHANGELOG)、原因码是唯一可依赖的错误契约、`stopped_at` 语义澄清与 0.3.0 改名计划。
 
 ### Latest Verification

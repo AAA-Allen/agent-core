@@ -6,3 +6,4 @@ build/
 dist/
 .pytest_cache/
 outputs/
+agent_runtime_document_pack/
