@@ -3,7 +3,10 @@
 import unittest
 
 from agent_core import RunStatus
+from examples.local_model import AGENT_CONFIG, FailingLocalModel, LocalTrainedModel
 from examples.text_pipeline import build_text_pipeline
+from agent_core import Runtime
+from agent_core.nodes import build_agent_from_config
 
 
 class TextPipelineExampleTests(unittest.TestCase):
@@ -36,6 +39,20 @@ class TextPipelineExampleTests(unittest.TestCase):
             [event.step for event in result.trace],
             ["normalize", "validate", "analyze", "classify"],
         )
+
+
+class LocalModelExampleTests(unittest.TestCase):
+    def test_in_process_model_answers_through_llm_node(self) -> None:
+        agent = build_agent_from_config(AGENT_CONFIG, runtime=Runtime(), model=LocalTrainedModel())
+        result = agent.run({"task": "你好"})
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(result.state["answer"], "(本地模型)收到:问题:你好")
+
+    def test_custom_failure_reason_code_is_reported(self) -> None:
+        agent = build_agent_from_config(AGENT_CONFIG, runtime=Runtime(), model=FailingLocalModel())
+        result = agent.run({"task": "你好"})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "LOCAL_MODEL_OOM")
 
 
 if __name__ == "__main__":

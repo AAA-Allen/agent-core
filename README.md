@@ -194,6 +194,16 @@ agent-core-server --config examples/assistant_agent.json
 
 fail-closed 语义:未绑定模型 → BLOCKED `MODEL_NOT_CONFIGURED`(不伪装);模板缺键 → FAILED `PROMPT_KEY_MISSING`;端点 HTTP 错误/超时/响应畸形 → FAILED 对应原因码。`GET /api/health` 如实报告 `model_configured`。适配器不解析提示词、不做 JSON mode 或函数调用;结构化输出应通过工具节点实现。
 
+### 自训练 / 本地模型
+
+`ModelAdapter` 是结构化协议,不要求继承、不绑定 HTTP——任何有 `complete(messages, *, tools, context) -> {"content": str}` 方法的对象都是合法适配器。三种接入路径:
+
+1. **主流推理框架部署(vLLM/SGLang/Ollama/Xinference/LMDeploy 等)**:它们都暴露 OpenAI 兼容端点,直接用内置 `OpenAICompatibleModel`,零代码。
+2. **自定义 HTTP 协议**:实现自己的 `complete`,内部用任意客户端调用你的服务,`model=` 传入。
+3. **进程内直连(无 HTTP)**:`complete` 就是普通 Python 调用,直接包装你的模型对象;失败时抛携带 `reason_code` 属性的异常,节点会把它如实报告为 FAILED 原因码。
+
+`examples/local_model.py` 是路径 3 的可运行示例(`python -m examples.local_model`),包含成功与失败契约两种形态;把它接到 HTTP 服务只需 `create_server(model=LocalTrainedModel())`。
+
 ## 声明式 Agent 装配
 
 `agent_core/nodes.py` 提供确定性节点工厂库，让 Agent 可以用 JSON 配置组装而不必写 Python:
