@@ -312,3 +312,16 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 276 passed。
+
+## Session 2026-10-25(续十一):server.py 拆分(批判偿还第三批)
+
+- [x] 1236 行 `server.py` 按职责拆为四模块,公共导入面经再导出保持不变(零测试改动):
+  - `registry.py`(245 行):AgentRegistry、SessionManager、agent_resolver、配置装载/注册、依赖环检测、default_tools;
+  - `workbench.py`(97 行):内置确定性演示 Agent;
+  - `http_api.py`(668 行):ApiError、路由、全部端点处理器、SSE(生命周期+token)、静态文件、Origin/Host 校验;
+  - `server.py`(316 行):AgentServer、create_server、CLI 入口、热重载守护、run 索引持久化——纯组合与生命周期。
+- [x] 拆分为纯搬移(脚本按行区间切分),唯一修正是 http_api 补 `threading` 导入;276 项回归双 runner 通过。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 276 passed。
