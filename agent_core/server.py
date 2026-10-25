@@ -415,10 +415,25 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
         return checkpoint is not None and checkpoint.next_node is not None
 
     def _handle_get_run(self, run_id: str) -> None:
-        try:
-            result = self.store.load(run_id)
-        except ValueError as exc:
-            raise ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, "INVALID_RUN_RECORD", str(exc))
+        import time as _time
+
+        result = None
+        for attempt in range(20):
+            try:
+                result = self.store.load(run_id)
+            except ValueError as exc:
+                raise ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, "INVALID_RUN_RECORD", str(exc))
+            if result is not None:
+                break
+            # 运行时在内存中先于落盘到达终态;对已知终态运行的读取做有界等待,
+            # 保证 "status 终态 ⇒ 结果可取" 的接口自洽。
+            try:
+                status = self.runtime.get_status(run_id)
+            except ValueError as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_RUN_ID", str(exc))
+            if status is None or not status.terminal:
+                break
+            _time.sleep(0.05)
         if result is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_RUN", f"unknown run: {run_id}")
         self._send_json(HTTPStatus.OK, {

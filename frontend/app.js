@@ -331,12 +331,21 @@ async function pollLiveTask(task) {
   const status = await watchLiveTask(task);
   if (task.status !== 'running') return;
   if (status === 'CONNECTION_LOST') { failTask(task, '与 Runtime 服务的连接中断。'); return; }
-  try {
-    const payload = await apiFetch(`/api/runs/${task.id}`, {}, 8000);
-    completeLiveTask(task, payload.run);
-  } catch (error) {
-    if (error.code === 'UNKNOWN_RUN') failTask(task, '服务端没有这条运行的记录，可能已被重启清除。');
-    else failTask(task, `获取运行结果失败：${error.message}`);
+  // 终态在内存先于落盘可见,结果读取遇到短暂 404 时有界重试
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      const payload = await apiFetch(`/api/runs/${task.id}`, {}, 8000);
+      completeLiveTask(task, payload.run);
+      return;
+    } catch (error) {
+      if (error.code !== 'UNKNOWN_RUN' || attempt === 9) {
+        failTask(task, error.code === 'UNKNOWN_RUN'
+          ? '服务端没有这条运行的记录，可能已被重启清除。'
+          : `获取运行结果失败：${error.message}`);
+        return;
+      }
+      await sleep(300);
+    }
   }
 }
 
