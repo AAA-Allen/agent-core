@@ -201,7 +201,7 @@ class AgentShellTests(unittest.TestCase):
             deadline = monotonic() + 5.0
             while monotonic() < deadline and not ctx.cancel_requested:
                 sleep(0.01)
-            return NodeResult.success({"waited": True})
+            return NodeResult.success({"observed_cancel": ctx.cancel_requested})
 
         agent = (
             AgentBuilder("agent")
@@ -219,6 +219,7 @@ class AgentShellTests(unittest.TestCase):
         worker = threading.Thread(target=execute)
         worker.start()
         self.assertTrue(started.wait(timeout=5.0))
+        begin = monotonic()
         accepted = False
         deadline = monotonic() + 5.0
         while monotonic() < deadline:
@@ -227,8 +228,10 @@ class AgentShellTests(unittest.TestCase):
                 break
             sleep(0.005)
         self.assertTrue(accepted)
-        worker.join(timeout=5.0)
+        worker.join(timeout=8.0)
         self.assertFalse(worker.is_alive())
+        elapsed = monotonic() - begin
+        self.assertLess(elapsed, 4.0, "node must observe the cancel request and exit early")
         result = outcome["result"]
         self.assertEqual(result.status, RunStatus.CANCELED)
         self.assertEqual(result.reason_code, "CANCEL_REQUESTED")

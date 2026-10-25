@@ -238,6 +238,8 @@ class ServerLifecycleTests(ServerTestBase):
         self.assertEqual(outcome["result"].status.value, "CANCELED")
 
     def test_async_run_polls_to_completion(self) -> None:
+        import time
+
         status, payload = self.post_json(
             "/api/runs",
             {"agent": "workbench", "input": {"task": "异步任务一;异步任务二"}, "wait": False},
@@ -249,10 +251,15 @@ class ServerLifecycleTests(ServerTestBase):
         status, payload = self.request("GET", f"/api/runs/{run_id}")
         self.assertEqual(status, 200)
         self.assertEqual(payload["run"]["status"], "COMPLETED")
-        status, payload = self.request("GET", "/api/runs")
-        self.assertEqual(status, 200)
-        self.assertEqual(payload["active"], [])
-        self.assertIn(run_id, payload["runs"])
+        # 终态可见与后台线程清理活跃集合之间存在短暂窗口,轮询等待清理完成
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            _, listing = self.request("GET", "/api/runs")
+            if run_id not in listing["active"]:
+                break
+            time.sleep(0.05)
+        self.assertNotIn(run_id, listing["active"])
+        self.assertIn(run_id, listing["runs"])
 
     def test_async_run_rejects_reused_run_id(self) -> None:
         status, payload = self.post_json(

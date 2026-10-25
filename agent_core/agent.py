@@ -79,7 +79,16 @@ class AgentNodeContext:
     model: ModelAdapter | None = None
     tools: ToolRegistry | None = None
     memory: MemoryStore | None = None
-    cancel_requested: bool = False
+    cancel_requested_fn: Callable[[], bool] | None = None
+
+    def __post_init__(self) -> None:
+        if self.cancel_requested_fn is not None and not callable(self.cancel_requested_fn):
+            raise TypeError("cancel_requested_fn must be callable when provided")
+
+    @property
+    def cancel_requested(self) -> bool:
+        """Whether the runtime has requested cooperative cancellation."""
+        return False if self.cancel_requested_fn is None else bool(self.cancel_requested_fn())
 
 
 AgentNode = Callable[[AgentNodeContext], NodeResult]
@@ -169,7 +178,7 @@ class AgentBuilder:
                 model=self.model,
                 tools=self.tools,
                 memory=self.memory,
-                cancel_requested=context.cancel_requested,
+                cancel_requested_fn=getattr(context, "_cancel_requested", None),
             ))
 
         self._graph.add_node(node_id, runtime_node)
