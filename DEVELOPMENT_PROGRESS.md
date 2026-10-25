@@ -181,3 +181,16 @@
 - 前端 localStorage 历史与 SSE 均假设单用户本机场景。
 - 终态在 Runtime 内存先于结果落盘可见;服务端 `GET /api/runs/{id}` 对已知终态运行做有界等待(最多约 1 秒)桥接该窗口,前端结果读取对短暂 404 做有限重试。
 - `AgentNodeContext.cancel_requested` 是活回调,节点内每次访问实时求值;长任务应轮询该标志实现协作退出。
+
+## Session 2026-10-25(续二):契约测试校准与打包
+
+### 已完成
+
+- [x] `tests/test_contract.py`:文档包 `test_runtime_contract.py` 目标契约一对一校准(10 项)——顺序执行、条件路由、阻断/失败收敛、异常不泄露消息、编译期校验、max_steps、simulated 标记、Trace 归属与有序性。适配点:目标 API 的 `status="OK"` 对应实现的 `NodeResult.success()`(三态枚举);异常契约额外钉住"Trace 只含 error_type 不含消息"。
+- [x] 校准抓到并修复真实缺口:图 Runtime 节点异常未记录 `error_type`(线性 WorkflowRunner 有)——`emit()` 增加 error_type 透传,`NODE_EXCEPTION` 事件带异常类型。
+- [x] 打包:pyproject 0.2.0,`[project.scripts]` 提供 `agent-core-server` 控制台入口;`pip install -e .` 验证通过,元数据版本与命令可用。
+- [x] 文档包契约模板保持未跟踪原样;校准结果以本文件与本仓库测试为准。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 235 passed(170 基线 + Agent 外壳 19 + HTTP 服务 24 + 节点库 12 + 契约 10)。

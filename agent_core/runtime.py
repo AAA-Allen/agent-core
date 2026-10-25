@@ -568,13 +568,14 @@ class Runtime:
 
         def emit(event_type: str, *, node_id: str | None = None,
                  execution_id: str | None = None, status: str | None = None,
-                 reason_code: str | None = None) -> None:
+                 reason_code: str | None = None, error_type: str | None = None) -> None:
             nonlocal sequence
             sequence += 1
             timestamp = datetime.now(timezone.utc).isoformat()
             trace.append(TraceEvent(
                 run_id=identity, step=node_id or "", status=status or event_type,
                 started_at=timestamp, duration_ms=0.0, reason_code=reason_code,
+                error_type=error_type,
                 event_id=uuid4().hex, event_type=event_type, sequence=sequence,
                 node_id=node_id, execution_id=execution_id,
                 state_version=state_version,
@@ -654,9 +655,10 @@ class Runtime:
                     return RunResult(identity, final_status, _json_snapshot(state),
                                      tuple(trace), current, result.reason_code,
                                      _json_snapshot(state), simulated)
-            except Exception:
+            except Exception as exc:
                 emit("node.failed", node_id=current, execution_id=execution_id,
-                     status=RunStatus.FAILED.value, reason_code="NODE_EXCEPTION")
+                     status=RunStatus.FAILED.value, reason_code="NODE_EXCEPTION",
+                     error_type=type(exc).__name__)
                 emit("run.failed", node_id=current, status=RunStatus.FAILED.value,
                      reason_code="NODE_EXCEPTION")
                 return RunResult(identity, RunStatus.FAILED, _json_snapshot(state),
