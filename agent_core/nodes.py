@@ -259,6 +259,13 @@ def llm_node(params: Mapping[str, Any]) -> AgentNode:
     or protocol failure → FAILED with the adapter's reason code. Prompts and
     replies are plain strings; structured output belongs in a tool node.
 
+    Set ``history_key`` to make the node multi-turn: the conversation
+    (``[{"role", "content"}, ...]``) is read from and written back to that
+    session-memory key, so successive runs in one session share context.
+    Requires session memory — without it the node blocks with
+    ``SESSION_MEMORY_REQUIRED`` rather than silently forgetting. Malformed
+    history in memory fails with ``HISTORY_INVALID``.
+
     If the adapter implements the optional ``complete_stream(messages,
     on_delta)`` convention, it is used instead of ``complete`` and every
     delta is published to the process token bus (keyed by run id) so HTTP
@@ -269,11 +276,27 @@ def llm_node(params: Mapping[str, Any]) -> AgentNode:
     system = params.get("system")
     if system is not None and not isinstance(system, str):
         raise ValueError("node param 'system' must be a string when provided")
+    history_key = params.get("history_key")
+    if history_key is not None and (not isinstance(history_key, str) or not history_key.strip()):
+        raise ValueError("node param 'history_key' must be a nonempty string when provided")
     route = _require_route(params)
 
     def execute(ctx: AgentNodeContext) -> NodeResult:
         if ctx.model is None:
             return NodeResult.blocked("MODEL_NOT_CONFIGURED")
+        history: list[dict[str, str]] = []
+        if history_key:
+            if ctx.memory is None:
+                return NodeResult.blocked("SESSION_MEMORY_REQUIRED")
+            stored = ctx.memory.read(history_key, [])
+            if not isinstance(stored, list) or any(
+                not isinstance(item, Mapping)
+                or item.get("role") not in ("user", "assistant")
+                or not isinstance(item.get("content"), str)
+                for item in stored
+            ):
+                return NodeResult.failed("HISTORY_INVALID")
+            history = [{"role": item["role"], "content": item["content"]} for item in stored]
         try:
             rendered_prompt = _format_from_state(prompt, ctx.state)
             rendered_system = _format_from_state(system, ctx.state) if system else None
@@ -282,6 +305,7 @@ def llm_node(params: Mapping[str, Any]) -> AgentNode:
         messages: list[dict[str, str]] = []
         if rendered_system:
             messages.append({"role": "system", "content": rendered_system})
+        messages.extend(history)
         messages.append({"role": "user", "content": rendered_prompt})
         stream_fn = getattr(ctx.model, "complete_stream", None)
         if callable(stream_fn):
@@ -312,7 +336,14 @@ def llm_node(params: Mapping[str, Any]) -> AgentNode:
         content = reply.get("content") if isinstance(reply, Mapping) else None
         if not isinstance(content, str):
             return NodeResult.failed("MODEL_INVALID_REPLY")
-        return NodeResult.success({into: content}, route=route)
+        updates: dict[str, Any] = {into: content}
+        if history_key:
+            if ctx.memory is None:
+                return NodeResult.blocked("SESSION_MEMORY_REQUIRED")
+            history.append({"role": "user", "content": rendered_prompt})
+            history.append({"role": "assistant", "content": content})
+            ctx.memory.write(history_key, history)
+        return NodeResult.success(updates, route=route)
 
     return execute
 

@@ -335,3 +335,13 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 285 passed。
+
+## Session 2026-10-25(续十四):多轮对话与循环可视化
+
+- [x] `llm` 节点 `history_key`:多轮对话——历史从会话记忆读入(校验形状)并写回,模型看到完整上下文;无会话记忆 BLOCKED `SESSION_MEMORY_REQUIRED`,历史损坏 FAILED `HISTORY_INVALID`;assistant 示例启用。
+- [x] 工作台时间线渲染 `*_rounds` 工具调用轮(通用扫描,不绑定 agent_loop 专属键名):工具名、参数与结果摘要作为节点子步骤展示。
+- [x] 测试 3 项:两轮对话消息序列断言(含会话快照)、无记忆阻断、历史损坏;服务端 assistant 测试升级为多轮语义(带会话两连跑 + 无会话阻断)。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 288 passed。

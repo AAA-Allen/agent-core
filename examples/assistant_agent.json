@@ -1,12 +1,12 @@
 {
   "name": "assistant",
   "instructions": "接收用户问题,委派给大模型回答,并整理输出。",
-  "description": "LLM-backed assistant; requires AGENT_MODEL_* configuration, otherwise blocks with MODEL_NOT_CONFIGURED.",
-  "metadata": {"example": true, "requires_model": true},
+  "description": "Multi-turn LLM assistant; requires AGENT_MODEL_* configuration and a session, otherwise blocks.",
+  "metadata": {"example": true, "requires_model": true, "requires_session": true},
   "entry": "intake",
   "nodes": [
     {"id": "intake", "type": "validate_input", "params": {"field": "task", "blocked_reason": "EMPTY_TASK", "route": "ask"}},
-    {"id": "ask", "type": "llm", "params": {"system": "你是一个简洁、诚实的助手。用中文回答。", "prompt": "请回答以下问题:{task}", "into": "answer", "route": "render"}},
+    {"id": "ask", "type": "llm", "params": {"system": "你是一个简洁、诚实的助手。用中文回答。", "prompt": "{task}", "into": "answer", "history_key": "messages", "route": "render"}},
     {"id": "render", "type": "template", "params": {"updates": {"summary": "{answer}"}}}
   ],
   "edges": [

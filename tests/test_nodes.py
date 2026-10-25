@@ -323,6 +323,71 @@ class ConfigAssemblyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_agent_from_config(config, runtime=Runtime(), tools=registry)
 
+    def test_llm_history_key_enables_multi_turn(self) -> None:
+        class RecordingModel:
+            def __init__(self):
+                self.turns = []
+
+            def complete(self, messages):
+                self.turns.append([dict(m) for m in messages])
+                return {"content": f"回复{len(self.turns)}"}
+
+        config = {
+            "name": "chat",
+            "entry": "ask",
+            "nodes": [{"id": "ask", "type": "llm",
+                       "params": {"prompt": "{q}", "into": "answer", "history_key": "messages"}}],
+        }
+        from agent_core import InMemoryMemory
+
+        memory = InMemoryMemory()
+        model = RecordingModel()
+        agent = build_agent_from_config(config, runtime=Runtime(), model=model, memory=memory)
+
+        first = agent.run({"q": "第一问"})
+        self.assertEqual(first.status, RunStatus.COMPLETED)
+        self.assertEqual(model.turns[0], [{"role": "user", "content": "第一问"}])
+
+        second = agent.run({"q": "第二问"})
+        self.assertEqual(second.status, RunStatus.COMPLETED)
+        self.assertEqual(
+            model.turns[1],
+            [
+                {"role": "user", "content": "第一问"},
+                {"role": "assistant", "content": "回复1"},
+                {"role": "user", "content": "第二问"},
+            ],
+        )
+        # 会话快照可见完整历史
+        self.assertEqual(len(memory.snapshot()["messages"]), 4)
+
+    def test_llm_history_requires_session_memory(self) -> None:
+        config = {
+            "name": "chat",
+            "entry": "ask",
+            "nodes": [{"id": "ask", "type": "llm",
+                       "params": {"prompt": "{q}", "history_key": "messages"}}],
+        }
+        agent = build_agent_from_config(config, runtime=Runtime(), model=_EchoLLM())
+        result = agent.run({"q": "x"})
+        self.assertEqual(result.status, RunStatus.BLOCKED)
+        self.assertEqual(result.reason_code, "SESSION_MEMORY_REQUIRED")
+
+    def test_llm_history_invalid_fails_closed(self) -> None:
+        from agent_core import InMemoryMemory
+
+        memory = InMemoryMemory({"messages": [{"role": "user"}]})
+        config = {
+            "name": "chat",
+            "entry": "ask",
+            "nodes": [{"id": "ask", "type": "llm",
+                       "params": {"prompt": "{q}", "history_key": "messages"}}],
+        }
+        agent = build_agent_from_config(config, runtime=Runtime(), model=_EchoLLM(), memory=memory)
+        result = agent.run({"q": "x"})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "HISTORY_INVALID")
+
     def test_example_config_file_runs_end_to_end(self) -> None:
         config = json.loads(Path("examples/support_agent.json").read_text(encoding="utf-8"))
         agent = build_agent_from_config(config, runtime=self.runtime, tools=demo_tools())
@@ -390,6 +455,11 @@ class ConfigValidationTests(unittest.TestCase):
             self.assertEqual(calls, ["hello"])
         finally:
             NODE_FACTORIES.pop("upper_case", None)
+
+
+class _EchoLLM:
+    def complete(self, messages):
+        return {"content": f"回复:{messages[-1]['content']}"}
 
 
 class AgentLoopTests(unittest.TestCase):

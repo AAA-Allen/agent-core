@@ -219,6 +219,7 @@ agent-core-server --config examples/assistant_agent.json
 | `prompt` | `{state_key}` 模板渲染的用户提示 |
 | `system` | 可选系统提示模板 |
 | `into` | 回复写入的状态键(默认 `reply`) |
+| `history_key` | 可选;启用多轮——对话历史(`[{"role","content"}]`)从该**会话记忆**键读入并写回,同会话的后续运行自动携带上下文;无会话记忆 BLOCKED `SESSION_MEMORY_REQUIRED`,历史损坏 FAILED `HISTORY_INVALID` |
 
 fail-closed 语义:未绑定模型 → BLOCKED `MODEL_NOT_CONFIGURED`(不伪装);模板缺键 → FAILED `PROMPT_KEY_MISSING`;端点 HTTP 错误/超时/响应畸形 → FAILED 对应原因码。`GET /api/health` 如实报告 `model_configured`。适配器不解析提示词、不做 JSON mode 或函数调用;结构化输出应通过工具节点实现。
 

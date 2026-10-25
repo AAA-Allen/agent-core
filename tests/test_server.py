@@ -801,7 +801,8 @@ class ServerConfigReloadTests(ServerTestBase):
         self.assertEqual(status, 200)
 
         status, payload = self.post_json(
-            "/api/runs", {"agent": "assistant", "input": {"task": "什么是确定性运行时?"}},
+            "/api/runs",
+            {"agent": "assistant", "input": {"task": "什么是确定性运行时?"}, "session_id": "sess-chat"},
         )
         self.assertEqual(status, 200)
         run = payload["run"]
@@ -810,6 +811,29 @@ class ServerConfigReloadTests(ServerTestBase):
         self.assertEqual(run["state"]["summary"], "这是模型的真实回答。")
         request = fake.requests[0]
         self.assertIn("什么是确定性运行时?", request["payload"]["messages"][-1]["content"])
+
+        # 多轮:同会话第二次运行,模型看到上一轮的用户消息与助手回复
+        status, payload = self.post_json(
+            "/api/runs",
+            {"agent": "assistant", "input": {"task": "再展开讲讲"}, "session_id": "sess-chat"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["run"]["status"], "COMPLETED")
+        status, payload = self.post_json(
+            "/api/runs",
+            {"agent": "assistant", "input": {"task": "换个话题"}, "session_id": "sess-chat"},
+        )
+        second_messages = fake.requests[-1]["payload"]["messages"]
+        self.assertIn({"role": "user", "content": "什么是确定性运行时?"}, second_messages)
+        self.assertIn({"role": "assistant", "content": "这是模型的真实回答。"}, second_messages)
+        self.assertEqual(second_messages[-1]["content"], "换个话题")
+
+        # 无会话 → 多轮节点诚实阻断,不假装记得
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "assistant", "input": {"task": "你好"}},
+        )
+        self.assertEqual(payload["run"]["status"], "BLOCKED")
+        self.assertEqual(payload["run"]["reason_code"], "SESSION_MEMORY_REQUIRED")
 
     def test_assistant_agent_blocks_without_model(self) -> None:
         register_agents_from_config(

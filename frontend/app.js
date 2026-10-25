@@ -162,12 +162,33 @@ function runTimeline(run) {
     if (NODE_OUTCOMES[event.event_type]) terminalByExecution.set(event.execution_id, event);
   });
   const seen = new Set();
+  const roundsByNode = {};
+  (run.state && typeof run.state === 'object' ? Object.entries(run.state) : []).forEach(([key, value]) => {
+    if (key.endsWith('_rounds') && Array.isArray(value)) {
+      value.forEach((round) => {
+        if (round && typeof round === 'object' && typeof round.tool === 'string') {
+          (roundsByNode[key.replace(/_rounds$/, '')] || (roundsByNode[key.replace(/_rounds$/, '')] = [])).push(round);
+        }
+      });
+    }
+  });
   run.trace.forEach((event) => {
     if (event.event_type !== 'node.started' || seen.has(event.node_id)) return;
     seen.add(event.node_id);
     const outcome = terminalByExecution.get(event.execution_id);
     const [label, nodeState, marker] = outcome ? NODE_OUTCOMES[outcome.event_type] : ['执行中', 'current', 'loader-circle'];
     steps.push({ title: event.node_id, desc: label, marker, state: nodeState, time: clockTime(event.started_at) });
+    (roundsByNode[event.node_id] || []).forEach((round, index) => {
+      const args = JSON.stringify(round.arguments || {});
+      const output = JSON.stringify(round.output || {});
+      steps.push({
+        title: `↳ ${round.tool} · 第 ${index + 1} 轮`,
+        desc: `${args.length > 80 ? args.slice(0, 80) + '…' : args} → ${output.length > 80 ? output.slice(0, 80) + '…' : output}`,
+        marker: 'wrench',
+        state: nodeState === 'current' ? 'current' : 'done',
+        time: '',
+      });
+    });
   });
   const final = run.trace[run.trace.length - 1];
   const failed = run.status !== 'COMPLETED';

@@ -2,6 +2,13 @@
 
 本项目遵循语义化版本。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### 新增
+
+- **llm 多轮对话**:`llm` 节点 `history_key` 参数——对话历史从会话记忆读入并写回,同会话运行自动携带上下文;无会话 BLOCKED `SESSION_MEMORY_REQUIRED`,历史损坏 FAILED `HISTORY_INVALID`。
+- **工作台工具轮次可视化**:时间线自动渲染 `*_rounds` 状态键中的工具调用轮(工具名、参数、结果摘要)。
+
 ## [0.4.0] - 2026-10-25
 
 框架层的关键跃迁:模型驱动的工具使用循环,以及项目定位收窄为独立的 agent 系统/框架/页面(移除领域桥接示例)。
