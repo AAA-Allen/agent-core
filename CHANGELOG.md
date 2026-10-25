@@ -2,7 +2,9 @@
 
 本项目遵循语义化版本。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased]
+## [0.3.0] - 2026-10-25
+
+模型接入、领域工具桥接与工程硬化:从确定性编排平台到可接真实智能的运行时。
 
 ### 新增
 
