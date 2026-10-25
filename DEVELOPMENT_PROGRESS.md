@@ -301,3 +301,14 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 266 passed。
+
+## Session 2026-10-25(续十):token 流式输出(批判偿还第二批)
+
+- [x] `agent_core/streaming.py`:`TokenBus`——按 run_id 键控的进程内增量总线,线程安全、历史回放(SSE 晚连接不丢字)、容量上限(默认 1 万条,越界置 truncated 标记)。
+- [x] `OpenAICompatibleModel.complete_stream(messages, on_delta)`:可选约定,`stream: true` + 标准库逐行解析端点 SSE(含 `[DONE]` 与 usage 帧),错误原因码与 `complete` 一致;`llm` 节点检测到即用、无则回退,失败映射原因码并关闭总线。
+- [x] SSE `event: token` 帧(节点归属 + 文本),服务端循环内增量转发;工作台时间线下方新增"模型输出"实时面板(自动滚动)。
+- [x] 测试 11 项:总线(回放/关闭后丢弃/容量截断/未知 run)、节点(流式发布与装配/回退/失败关闭)、适配器(分块回调/无回调装配/HTTP 错误)、服务端 e2e(慢流 Agent 的逐帧 token 断言 + done 终态)。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 276 passed。

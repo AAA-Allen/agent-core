@@ -257,6 +257,11 @@ def llm_node(params: Mapping[str, Any]) -> AgentNode:
     closed: no model bound → BLOCKED ``MODEL_NOT_CONFIGURED``; a transport
     or protocol failure → FAILED with the adapter's reason code. Prompts and
     replies are plain strings; structured output belongs in a tool node.
+
+    If the adapter implements the optional ``complete_stream(messages,
+    on_delta)`` convention, it is used instead of ``complete`` and every
+    delta is published to the process token bus (keyed by run id) so HTTP
+    consumers can render tokens live; the assembled reply is identical.
     """
     prompt = _require_str(params, "prompt")
     into = _require_str(params, "into", default="reply")
@@ -277,13 +282,32 @@ def llm_node(params: Mapping[str, Any]) -> AgentNode:
         if rendered_system:
             messages.append({"role": "system", "content": rendered_system})
         messages.append({"role": "user", "content": rendered_prompt})
-        try:
-            reply = ctx.model.complete(messages)
-        except Exception as exc:
-            reason = getattr(exc, "reason_code", None)
-            if isinstance(reason, str) and reason.strip():
-                return NodeResult.failed(reason)
-            return NodeResult.failed("MODEL_REQUEST_FAILED")
+        stream_fn = getattr(ctx.model, "complete_stream", None)
+        if callable(stream_fn):
+            from .streaming import default_bus
+
+            bus = default_bus()
+            bus.open(ctx.run_id)
+            try:
+                reply = stream_fn(
+                    messages,
+                    on_delta=lambda text: bus.publish(ctx.run_id, ctx.node_id, text),
+                )
+            except Exception as exc:
+                reason = getattr(exc, "reason_code", None)
+                if isinstance(reason, str) and reason.strip():
+                    return NodeResult.failed(reason)
+                return NodeResult.failed("MODEL_REQUEST_FAILED")
+            finally:
+                bus.close(ctx.run_id)
+        else:
+            try:
+                reply = ctx.model.complete(messages)
+            except Exception as exc:
+                reason = getattr(exc, "reason_code", None)
+                if isinstance(reason, str) and reason.strip():
+                    return NodeResult.failed(reason)
+                return NodeResult.failed("MODEL_REQUEST_FAILED")
         content = reply.get("content") if isinstance(reply, Mapping) else None
         if not isinstance(content, str):
             return NodeResult.failed("MODEL_INVALID_REPLY")

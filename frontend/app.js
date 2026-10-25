@@ -194,6 +194,22 @@ function liveTimeline(task) {
   return steps;
 }
 
+function updateStreamOutput(task) {
+  let box = $('streamOutput');
+  if (!task.streamText) { if (box) box.remove(); return; }
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'streamOutput';
+    box.className = 'stream-output';
+    box.innerHTML = `<div class="stream-head">${icon('type')}<span>模型输出 · ${escapeHtml(task.streamNode || '')}</span></div><pre class="stream-body"></pre>`;
+    $('timeline').after(box);
+    refreshIcons();
+  }
+  const body = box.querySelector('.stream-body');
+  body.textContent = task.streamText;
+  body.scrollTop = body.scrollHeight;
+}
+
 function renderTaskView(task) {
   const [pillText, pillClass] = pillForTask(task);
   $('statePill').className = `state-pill ${pillClass}`;
@@ -207,6 +223,7 @@ function renderTaskView(task) {
   } else {
     demoTimeline(task);
   }
+  updateStreamOutput(task);
   updateResult(task);
   refreshIcons();
 }
@@ -373,6 +390,15 @@ function watchLiveTask(task) {
           task.lifecycle.push(item);
           if (state.activeId === task.id) renderTaskView(task);
         }
+      } catch { /* malformed frame */ }
+    });
+    source.addEventListener('token', (event) => {
+      try {
+        const item = JSON.parse(event.data);
+        if (!task.streamNode) task.streamNode = item.node_id;
+        if (!task.streamText) task.streamText = '';
+        task.streamText += item.text;
+        if (state.activeId === task.id) updateStreamOutput(task);
       } catch { /* malformed frame */ }
     });
     source.addEventListener('done', (event) => {

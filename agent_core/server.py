@@ -904,6 +904,8 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
         """
         import time as _time
 
+        from .streaming import default_bus
+
         try:
             _validate_run_id(run_id)
             status = self.runtime.get_status(run_id)
@@ -923,7 +925,9 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(f"event: {event_name}\ndata: {body}\n\n".encode("utf-8"))
             self.wfile.flush()
 
+        bus = default_bus()
         sent = 0
+        token_index = 0
         started = _time.monotonic()
         last_heartbeat = started
         try:
@@ -932,6 +936,10 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                 for event in events[sent:]:
                     send("lifecycle", _lifecycle_event_to_dict(event))
                     sent += 1
+                deltas, _truncated, _closed = bus.history(run_id, after=token_index)
+                for node_id, text in deltas:
+                    send("token", {"run_id": run_id, "node_id": node_id, "text": text})
+                    token_index += 1
                 status = self.runtime.get_status(run_id)
                 if status is not None and status.terminal:
                     send("done", {"run_id": run_id, "status": status.value})

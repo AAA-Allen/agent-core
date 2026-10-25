@@ -194,6 +194,10 @@ agent-core-server --config examples/assistant_agent.json
 
 fail-closed 语义:未绑定模型 → BLOCKED `MODEL_NOT_CONFIGURED`(不伪装);模板缺键 → FAILED `PROMPT_KEY_MISSING`;端点 HTTP 错误/超时/响应畸形 → FAILED 对应原因码。`GET /api/health` 如实报告 `model_configured`。适配器不解析提示词、不做 JSON mode 或函数调用;结构化输出应通过工具节点实现。
 
+### 流式输出
+
+适配器可实现**可选的** `complete_stream(messages, on_delta)` 约定:逐块调用 `on_delta(text)` 并返回与 `complete` 相同的映射。内置 `OpenAICompatibleModel` 已实现(标准库逐行解析端点 SSE,`stream: true`);`llm` 节点检测到该方法时优先使用,否则无缝回退 `complete`——协议只声明真正存在的能力。每个增量会进入进程内 `TokenBus`(按 run_id 键控、历史回放、容量上限),`GET /api/runs/{id}/events/stream` 在生命周期帧之外转发 `event: token` 帧,工作台时间线下方实时渲染模型输出。跨进程流式不在范围内。
+
 ### 自训练 / 本地模型
 
 `ModelAdapter` 是结构化协议,不要求继承、不绑定 HTTP——任何有 `complete(messages, *, tools, context) -> {"content": str}` 方法的对象都是合法适配器。三种接入路径:

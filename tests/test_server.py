@@ -384,6 +384,76 @@ class ServerLifecycleTests(ServerTestBase):
         self.assertIn("run.created", event_types)
         self.assertIn("run.running", event_types)
 
+    def test_events_stream_carries_token_frames(self) -> None:
+        from tests.test_streaming import StreamingModel
+        from agent_core.nodes import build_agent_from_config
+
+        model = StreamingModel(chunks=("确定", "性", "运行时"))
+        agent = build_agent_from_config(
+            {
+                "name": "stream-agent",
+                "entry": "ask",
+                "nodes": [
+                    {"id": "ask", "type": "llm",
+                     "params": {"prompt": "问题:{q}", "into": "answer"}},
+                ],
+            },
+            runtime=self.server.runtime, model=model,
+        )
+        self.server.registry.register(agent)
+
+        release = threading.Event()
+        started = threading.Event()
+        original = model.complete_stream
+
+        def slow_stream(messages, on_delta=None):
+            started.set()
+            release.wait(timeout=5.0)
+            return original(messages, on_delta=on_delta)
+
+        model.complete_stream = slow_stream
+
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "stream-agent", "input": {"q": "hi"}, "wait": False},
+        )
+        self.assertEqual(status, 202)
+        run_id = payload["run_id"]
+        self.assertTrue(started.wait(timeout=5.0))
+
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=15)
+        frames: list[dict] = []
+        try:
+            connection.request("GET", f"/api/runs/{run_id}/events/stream")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            release.set()
+            current: dict = {}
+            while True:
+                raw = response.readline()
+                if not raw:
+                    break
+                line = raw.decode("utf-8").rstrip("\r\n")
+                if not line:
+                    if current:
+                        frames.append(current)
+                        current = {}
+                        if frames[-1].get("event") == "done":
+                            break
+                    continue
+                if line.startswith(":"):
+                    continue
+                key, _, value = line.partition(": ")
+                current[key] = value
+        finally:
+            release.set()
+            connection.close()
+
+        tokens = [json.loads(frame["data"]) for frame in frames if frame["event"] == "token"]
+        self.assertEqual([item["text"] for item in tokens], ["确定", "性", "运行时"])
+        self.assertTrue(all(item["node_id"] == "ask" for item in tokens))
+        done = [json.loads(frame["data"]) for frame in frames if frame["event"] == "done"]
+        self.assertEqual(done[-1]["status"], "COMPLETED")
+
     def test_events_stream_unknown_run_returns_json_error(self) -> None:
         status, body = self.request("GET", "/api/runs/missing-run/events/stream")
         self.assertEqual(status, 404)
@@ -713,7 +783,9 @@ class ServerConfigReloadTests(ServerTestBase):
     def test_assistant_agent_uses_injected_model(self) -> None:
         from tests.test_models import FakeOpenAIServer
 
-        fake = FakeOpenAIServer(body="这是模型的真实回答。").start()
+        fake = FakeOpenAIServer(
+            body="这是模型的真实回答。", stream_chunks=["这是模型的真实回答。"],
+        ).start()
         self.addCleanup(fake.stop)
         from agent_core.models import OpenAICompatibleModel
 

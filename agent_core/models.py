@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -109,6 +109,87 @@ class OpenAICompatibleModel:
             raise ModelRequestError("MODEL_INVALID_RESPONSE", "model response is not valid JSON") from None
         content, usage = self._extract(parsed)
         return {"content": content, "model": self.model, "usage": usage}
+
+    def complete_stream(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        on_delta: Callable[[str], None] | None = None,
+    ) -> Mapping[str, Any]:
+        """Streaming variant: invokes ``on_delta(text)`` per content chunk.
+
+        Uses the endpoint's SSE streaming mode and returns the same mapping
+        contract as :meth:`complete` (content assembled from deltas). Errors
+        carry the same reason codes. This method is an optional adapter
+        convention — nodes fall back to ``complete`` when it is absent.
+        """
+        if not isinstance(messages, Sequence) or not messages:
+            raise ValueError("messages must be a nonempty sequence")
+        for message in messages:
+            if not isinstance(message, Mapping) or not isinstance(message.get("role"), str) \
+                    or not isinstance(message.get("content"), str):
+                raise ValueError("each message needs string 'role' and 'content'")
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [dict(message) for message in messages],
+            "stream": True,
+        }, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        request = Request(
+            self.base_url + self._PATH,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "text/event-stream",
+            },
+            method="POST",
+        )
+        try:
+            response = urlopen(request, timeout=self.timeout_seconds)
+        except HTTPError as exc:
+            raise ModelRequestError(
+                "MODEL_HTTP_ERROR", f"model endpoint returned HTTP {exc.code}"
+            ) from None
+        except URLError as exc:
+            reason = getattr(exc, "reason", None)
+            code = "MODEL_TIMEOUT" if isinstance(reason, TimeoutError) else "MODEL_UNREACHABLE"
+            raise ModelRequestError(code, f"model endpoint unreachable: {type(reason).__name__}") from None
+        except OSError as exc:
+            raise ModelRequestError("MODEL_TRANSPORT_ERROR", f"model transport failed: {type(exc).__name__}") from None
+
+        parts: list[str] = []
+        usage: dict[str, Any] = {}
+        try:
+            with response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[len("data:"):].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        raise ModelRequestError("MODEL_INVALID_RESPONSE", "stream chunk is not valid JSON") from None
+                    if not isinstance(chunk, Mapping):
+                        raise ModelRequestError("MODEL_INVALID_RESPONSE", "stream chunk must be an object")
+                    usage_update = chunk.get("usage")
+                    if isinstance(usage_update, Mapping):
+                        usage = dict(usage_update)
+                    choices = chunk.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    first = choices[0]
+                    if not isinstance(first, Mapping):
+                        raise ModelRequestError("MODEL_INVALID_RESPONSE", "stream choice must be an object")
+                    delta = first.get("delta")
+                    if isinstance(delta, Mapping) and isinstance(delta.get("content"), str):
+                        parts.append(delta["content"])
+                        if on_delta is not None:
+                            on_delta(delta["content"])
+        except (UnicodeDecodeError, OSError) as exc:
+            raise ModelRequestError("MODEL_TRANSPORT_ERROR", f"stream read failed: {type(exc).__name__}") from None
+        return {"content": "".join(parts), "model": self.model, "usage": usage}
 
     @staticmethod
     def _extract(parsed: Any) -> tuple[str, Mapping[str, Any]]:

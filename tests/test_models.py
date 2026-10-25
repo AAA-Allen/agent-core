@@ -15,7 +15,7 @@ from agent_core.models import (
 class FakeOpenAIServer:
     """Minimal OpenAI-compatible endpoint with scripted behavior per path."""
 
-    def __init__(self, *, status=200, body=None, raw=None, delay=0.0) -> None:
+    def __init__(self, *, status=200, body=None, raw=None, delay=0.0, stream_chunks=None) -> None:
         outer = self
         self.requests: list[dict] = []
 
@@ -34,10 +34,19 @@ class FakeOpenAIServer:
                     import time
 
                     time.sleep(outer.delay)
+                if outer.status != 200:
+                    response = json.dumps({"error": "boom"}).encode("utf-8")
+                    self.send_response(outer.status)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(response)))
+                    self.end_headers()
+                    self.wfile.write(response)
+                    return
+                if payload.get("stream"):
+                    self._stream_response(payload)
+                    return
                 if outer.raw is not None:
                     response = outer.raw
-                elif outer.status != 200:
-                    response = json.dumps({"error": "boom"}).encode("utf-8")
                 else:
                     response = json.dumps({
                         "id": "chatcmpl-1",
@@ -54,6 +63,19 @@ class FakeOpenAIServer:
                 self.end_headers()
                 self.wfile.write(response)
 
+            def _stream_response(self, payload) -> None:
+                chunks = outer.stream_chunks if outer.stream_chunks is not None else ["你", "好", "呀"]
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.end_headers()
+                for chunk in chunks:
+                    frame = json.dumps({"choices": [{"delta": {"content": chunk}}]})
+                    self.wfile.write(f"data: {frame}\n\n".encode("utf-8"))
+                usage_frame = json.dumps({"choices": [{"delta": {}}], "usage": {"prompt_tokens": 2, "completion_tokens": 3}})
+                self.wfile.write(f"data: {usage_frame}\n\n".encode("utf-8"))
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+
             def log_message(self, *args) -> None:
                 pass
 
@@ -62,6 +84,7 @@ class FakeOpenAIServer:
         self.status = status
         self.raw = raw
         self.delay = delay
+        self.stream_chunks = stream_chunks
 
     def start(self) -> "FakeOpenAIServer":
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -137,6 +160,31 @@ class OpenAICompatibleModelTests(unittest.TestCase):
         for messages in ([], "not-a-list", [{"role": "user"}]):
             with self.assertRaises(ValueError):
                 model.complete(messages)
+
+    def test_complete_stream_assembles_deltas_and_invokes_callback(self) -> None:
+        self.fake.stream_chunks = ["确定", "性运", "行时"]
+        seen: list[str] = []
+        reply = self.model().complete(
+            [{"role": "user", "content": "hi"}],
+        ) if False else self.model().complete_stream(
+            [{"role": "user", "content": "hi"}], on_delta=seen.append,
+        )
+        self.assertEqual(reply["content"], "确定性运行时")
+        self.assertEqual(seen, ["确定", "性运", "行时"])
+        self.assertEqual(reply["usage"]["completion_tokens"], 3)
+        request = self.fake.requests[0]
+        self.assertIs(request["payload"]["stream"], True)
+
+    def test_complete_stream_without_callback_still_assembles(self) -> None:
+        self.fake.stream_chunks = ["a", "b"]
+        reply = self.model().complete_stream([{"role": "user", "content": "hi"}])
+        self.assertEqual(reply["content"], "ab")
+
+    def test_complete_stream_http_error_maps_to_reason_code(self) -> None:
+        self.fake.status = 401
+        with self.assertRaises(ModelRequestError) as caught:
+            self.model().complete_stream([{"role": "user", "content": "hi"}])
+        self.assertEqual(caught.exception.reason_code, "MODEL_HTTP_ERROR")
 
 
 class ModelFromEnvironmentTests(unittest.TestCase):

@@ -6,6 +6,7 @@
 
 ### 新增
 
+- **流式输出**:适配器可选 `complete_stream(messages, on_delta)` 约定(内置适配器已实现,标准库 SSE 解析);`llm` 节点优先流式、无则回退 `complete`;进程内 `TokenBus`(历史回放 + 容量上限)桥接节点与 SSE;`/events/stream` 新增 `token` 帧,工作台实时渲染。
 - **模型接入**:`agent_core.models.OpenAICompatibleModel`——纯标准库实现的 OpenAI 兼容 chat completions 适配器(单请求、不重试、失败带稳定原因码且不泄露密钥/载荷);`AGENT_MODEL_*` 环境变量配置(半配置视为未配置);声明式 `llm` 节点(模板提示 + fail-closed:未配置 BLOCKED、传输失败 FAILED 带原因码);服务端模型注入与 `/api/health` 的 `model_configured` 报告;`examples/assistant_agent.json`;本地假端点契约测试(不触网)。
 - **领域工具桥接**(`examples/cxr_bridge.py`):视觉/领域模型经 Tool 边界接入(能力门控 + 原因码透传);声明式 `tool` 节点 `capabilities` 参数显式授予权限;`--allow-root` 路径白名单。
 - **请求来源防护**:POST/DELETE 校验 Origin(localhost CSRF)与 Host(DNS rebinding),跨站请求 403;非浏览器客户端不受影响。
