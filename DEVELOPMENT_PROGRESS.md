@@ -221,3 +221,23 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 238 passed(170 基线 + Agent 外壳 19 + HTTP 服务 27 + 节点库 12 + 契约 10)。
+
+## Session 2026-10-25(续五):子 Agent 编排与配置热重载
+
+### 已完成
+
+- [x] `subagent` 节点工厂:委派给注册表中的其他 Agent 作为嵌套运行(独立 run_id、Trace、生命周期);输入支持状态模板,`summary_into` 把子运行摘要提升到父状态;子运行终态原样传播(COMPLETED→成功,BLOCKED→阻断,FAILED/CANCELED→失败),fail-closed 边界不变;装配期要求 resolver,未知委派目标 BLOCKED `SUBAGENT_NOT_FOUND`。
+- [x] 配置依赖环检测:`register_agents_from_config` 在装载期对配置间 subagent 依赖做 DFS,拒绝环;跨配置解析由服务端 resolver 提供(`registry.build`,共享会话内存)。
+- [x] `--config` 热重载:mtime 轮询(2 秒)守护线程;新配置先完整构建校验,成功才注销旧名并原子替换,失败保留旧版;从配置移除的 Agent 自动注销;名字被其他注册来源占用时拒绝。`AgentRegistry.unregister()` 支撑。
+- [x] `examples/orchestrator_agent.json`:委派 support-triage 的编排示例,API 测试覆盖嵌套 run_id 与摘要提升。
+- [x] 测试:节点库 15 项(委派成功/阻断传播/未知目标/装配期 resolver 要求),服务端 30 项(热重载替换/损坏保留/移除注销/环拒绝/orchestrator API 端到端)。
+
+### Known Limits
+
+- 父运行的取消不会中断进行中的子运行(嵌套运行是独立运行);子 Agent 的 Trace 在子运行记录中,父 Trace 只体现委派节点。
+- 代码注册(`register`)的 Agent 无法参与配置级环检测,循环委派最终以 RecursionError→FAILED 收敛。
+- 会话记忆通过 resolver 共享给子运行;声明式节点不读记忆,自定义节点需自行处理。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 244 passed(170 基线 + Agent 外壳 19 + HTTP 服务 30 + 节点库 15 + 契约 10)。

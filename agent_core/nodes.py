@@ -178,6 +178,65 @@ def route_by_value_node(params: Mapping[str, Any]) -> AgentNode:
     return execute
 
 
+def subagent_node(params: Mapping[str, Any], *, resolver: Callable[[str, Any], Any]) -> AgentNode:
+    """Delegate to another registered agent as a nested run.
+
+    The sub-run gets its own run_id, trace and lifecycle; the parent node
+    propagates the sub-run's terminal state (COMPLETED → success, BLOCKED →
+    blocked, FAILED/CANCELED → failed) so the fail-closed boundary stays
+    auditable. ``input`` maps sub-run input keys to literal or state-templated
+    values; ``summary_into`` hoists the sub-run's ``state["summary"]`` to a
+    top-level parent key. Cancellation of the parent run does not interrupt an
+    in-flight sub-run (it is an independent run); agents registered only in
+    code cannot be inspected for cycles, so config-level cycle checks are the
+    caller's responsibility for those.
+    """
+    name = _require_str(params, "agent")
+    input_spec = params.get("input", {})
+    if not isinstance(input_spec, Mapping):
+        raise ValueError("node param 'input' must be a mapping")
+    output_key = _require_str(params, "output_key", default="sub_result")
+    summary_into = params.get("summary_into")
+    if summary_into is not None and (not isinstance(summary_into, str) or not summary_into.strip()):
+        raise ValueError("node param 'summary_into' must be a nonempty string when provided")
+    route = _require_route(params)
+    if not callable(resolver):
+        raise ValueError("subagent nodes require a callable agent resolver")
+
+    def execute(ctx: AgentNodeContext) -> NodeResult:
+        agent = resolver(name, ctx.memory)
+        if agent is None:
+            return NodeResult.blocked("SUBAGENT_NOT_FOUND")
+        arguments: dict[str, Any] = {}
+        for key, value in input_spec.items():
+            if isinstance(value, str):
+                try:
+                    arguments[key] = _format_from_state(value, ctx.state)
+                except KeyError:
+                    return NodeResult.failed("SUBAGENT_INPUT_MISSING")
+            else:
+                arguments[key] = value
+        try:
+            result = agent.run(arguments)
+        except TypeError:
+            return NodeResult.failed("SUBAGENT_INPUT_INVALID")
+        status_value = result.status.value
+        if status_value == "COMPLETED":
+            updates: dict[str, Any] = {
+                output_key: {"run_id": result.run_id, "status": "COMPLETED", "state": dict(result.state)},
+            }
+            if summary_into:
+                summary = result.state.get("summary") if isinstance(result.state, Mapping) else None
+                if isinstance(summary, str):
+                    updates[summary_into] = summary
+            return NodeResult.success(updates, route=route)
+        if status_value == "BLOCKED":
+            return NodeResult.blocked(result.reason_code or "SUBAGENT_BLOCKED")
+        return NodeResult.failed(result.reason_code or f"SUBAGENT_{status_value}")
+
+    return execute
+
+
 NODE_FACTORIES: dict[str, AgentNodeFactory] = {
     "validate_input": validate_input_node,
     "split_steps": split_steps_node,
@@ -222,7 +281,9 @@ def _validate_config(config: Mapping[str, Any]) -> None:
         if node_id in seen:
             raise ValueError(f"duplicate node id: {node_id}")
         seen.add(node_id)
-        if not isinstance(node_type, str) or node_type not in NODE_FACTORIES:
+        if not isinstance(node_type, str) or (
+            node_type not in NODE_FACTORIES and node_type != "subagent"
+        ):
             raise ValueError(f"unknown node type: {node_type!r}")
         node_params = node.get("params", {})
         if not isinstance(node_params, Mapping):
@@ -252,8 +313,13 @@ def build_agent_from_config(
     runtime: Any,
     tools: ToolRegistry | None = None,
     memory: Any = None,
+    agent_resolver: Callable[[str, Any], Any] | None = None,
 ) -> Agent:
-    """Assemble an :class:`Agent` from a validated declarative config."""
+    """Assemble an :class:`Agent` from a validated declarative config.
+
+    ``agent_resolver(name, memory)`` is required only when the config uses
+    ``subagent`` nodes; it builds the delegate agent for each sub-run.
+    """
     _validate_config(config)
     builder = AgentBuilder(
         config["name"],
@@ -264,8 +330,13 @@ def build_agent_from_config(
         memory=memory,
     )
     for node in config["nodes"]:
-        factory = NODE_FACTORIES[node["type"]]
-        node_fn = factory(dict(node.get("params", {})))
+        if node["type"] == "subagent":
+            if agent_resolver is None:
+                raise ValueError(f"subagent node '{node['id']}' requires an agent_resolver")
+            node_fn = subagent_node(dict(node.get("params", {})), resolver=agent_resolver)
+        else:
+            factory = NODE_FACTORIES[node["type"]]
+            node_fn = factory(dict(node.get("params", {})))
         builder.add_node(node["id"], node_fn)
     builder.set_entry(config["entry"])
     for edge in config.get("edges", []):
@@ -279,6 +350,7 @@ __all__ = [
     "register_node_factory",
     "route_by_value_node",
     "split_steps_node",
+    "subagent_node",
     "template_node",
     "tool_node",
     "validate_input_node",

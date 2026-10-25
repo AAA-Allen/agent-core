@@ -8,7 +8,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 from agent_core import AgentBuilder, NodeResult, Runtime
-from agent_core.server import AgentRegistry, create_server
+from agent_core.server import AgentRegistry, create_server, register_agents_from_config
 
 
 class ServerTestBase(unittest.TestCase):
@@ -598,6 +598,81 @@ class ServerRunIndexTests(ServerTestBase):
             restarted.shutdown()
             restarted.server_close()
             thread.join(timeout=5.0)
+
+
+class ServerConfigReloadTests(ServerTestBase):
+    def _hot_config(self, version: int) -> str:
+        return json.dumps({
+            "name": "hot-agent",
+            "description": f"v{version}",
+            "entry": "only",
+            "nodes": [{"id": "only", "type": "template", "params": {"updates": {"v": f"v{version}"}}}],
+        }, ensure_ascii=False)
+
+    def test_config_hot_reload_replaces_and_unregisters(self) -> None:
+        config_path = Path(self._tmp.name) / "hot.json"
+        config_path.write_text(self._hot_config(1), encoding="utf-8")
+        registered = register_agents_from_config(config_path, self.server.registry, runtime=self.server.runtime)
+        self.server.note_config_ownership(str(config_path), registered)
+
+        status, payload = self.post_json("/api/runs", {"agent": "hot-agent", "input": {}})
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["run"]["state"]["v"], "v1")
+
+        config_path.write_text(self._hot_config(2), encoding="utf-8")
+        self.assertEqual(self.server.reload_config(config_path), ["hot-agent"])
+        status, payload = self.request("GET", "/api/agents")
+        hot = [item for item in payload["agents"] if item["name"] == "hot-agent"][0]
+        self.assertEqual(hot["description"], "v2")
+        status, payload = self.post_json("/api/runs", {"agent": "hot-agent", "input": {}})
+        self.assertEqual(payload["run"]["state"]["v"], "v2")
+
+        config_path.write_text("{not json", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.server.reload_config(config_path)
+        status, payload = self.post_json("/api/runs", {"agent": "hot-agent", "input": {}})
+        self.assertEqual(payload["run"]["state"]["v"], "v2")
+
+        config_path.write_text(json.dumps({"agents": []}), encoding="utf-8")
+        self.assertEqual(self.server.reload_config(config_path), [])
+        status, payload = self.request("GET", "/api/health")
+        self.assertNotIn("hot-agent", payload["agents"])
+
+    def test_orchestrator_delegates_via_api(self) -> None:
+        register_agents_from_config(
+            "examples/support_agent.json", self.server.registry, runtime=self.server.runtime,
+        )
+        register_agents_from_config(
+            "examples/orchestrator_agent.json", self.server.registry, runtime=self.server.runtime,
+        )
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "orchestrator", "input": {"task": "无法登录;收不到验证码"}},
+        )
+        self.assertEqual(status, 200)
+        run = payload["run"]
+        self.assertEqual(run["status"], "COMPLETED")
+        self.assertEqual(run["state"]["delegated"]["status"], "COMPLETED")
+        self.assertIn("已拆解为 2 个步骤", run["state"]["delegated_summary"])
+        self.assertEqual(run["state"]["summary"], "委派完成:工单“无法登录;收不到验证码”已拆解为 2 个步骤。")
+        self.assertNotEqual(run["state"]["delegated"]["run_id"], run["run_id"])
+        self.assertEqual(run["trace"][-1]["event_type"], "run.completed")
+
+    def test_config_dependency_cycle_rejected(self) -> None:
+        config_path = Path(self._tmp.name) / "cycle.json"
+        config_path.write_text(json.dumps({"agents": [
+            {
+                "name": "agent-a", "entry": "call",
+                "nodes": [{"id": "call", "type": "subagent", "params": {"agent": "agent-b"}}],
+            },
+            {
+                "name": "agent-b", "entry": "call",
+                "nodes": [{"id": "call", "type": "subagent", "params": {"agent": "agent-a"}}],
+            },
+        ]}, ensure_ascii=False), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            register_agents_from_config(config_path, self.server.registry, runtime=self.server.runtime)
+        status, payload = self.request("GET", "/api/health")
+        self.assertEqual(payload["agents"], ["workbench"])
 
 
 if __name__ == "__main__":

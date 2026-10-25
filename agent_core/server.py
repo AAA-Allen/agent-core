@@ -91,6 +91,16 @@ class AgentRegistry:
             self._agents[name] = master
             self._factories[name] = factory
 
+    def unregister(self, name: str) -> bool:
+        """Remove an agent registration; returns whether it existed."""
+        if not isinstance(name, str):
+            return False
+        with self._lock:
+            existed = name in self._agents or name in self._factories
+            self._agents.pop(name, None)
+            self._factories.pop(name, None)
+            return existed
+
     def build(self, name: str, *, memory: Any = None) -> Agent | None:
         """Build an agent instance, optionally bound to session memory."""
         if not isinstance(name, str):
@@ -243,9 +253,56 @@ def build_default_registry(*, runtime: Runtime) -> AgentRegistry:
     registry = AgentRegistry()
     tools = _default_tools()
     registry.register_factory(
-        "workbench", lambda memory=None: _build_workbench(runtime, tools, memory),
+        "workbench",
+        lambda memory=None: _build_workbench(runtime, tools, memory),
     )
     return registry
+
+
+def _agent_resolver(registry: AgentRegistry) -> Callable[[str, Any], Agent | None]:
+    """Build delegate agents on demand, sharing the caller's session memory."""
+    return lambda name, memory=None: registry.build(name, memory=memory)
+
+
+def _config_dependencies(configs: list[Mapping[str, Any]]) -> dict[str, list[str]]:
+    """Map config agent names to their in-config subagent dependencies."""
+    dependencies: dict[str, list[str]] = {}
+    for config in configs:
+        name = config["name"]
+        deps: list[str] = []
+        for node in config.get("nodes", []):
+            if not isinstance(node, Mapping) or node.get("type") != "subagent":
+                continue
+            params = node.get("params")
+            target = params.get("agent") if isinstance(params, Mapping) else None
+            if isinstance(target, str) and target.strip():
+                deps.append(target)
+        dependencies[name] = deps
+    return dependencies
+
+
+def _reject_dependency_cycles(dependencies: dict[str, list[str]]) -> None:
+    visiting: set[str] = set()
+    done: set[str] = set()
+    stack: list[str] = []
+
+    def visit(name: str) -> None:
+        if name in done:
+            return
+        if name in visiting:
+            cycle = stack[stack.index(name):] + [name]
+            raise ValueError("agent dependency cycle: " + " -> ".join(cycle))
+        visiting.add(name)
+        stack.append(name)
+        for dep in dependencies.get(name, []):
+            if dep in dependencies:
+                visit(dep)
+        stack.pop()
+        visiting.discard(name)
+        done.add(name)
+
+    for name in dependencies:
+        visit(name)
 
 
 def load_agents_from_config(
@@ -253,12 +310,18 @@ def load_agents_from_config(
     *,
     runtime: Runtime,
     tools: Any = None,
+    agent_resolver: Callable[[str, Any], Agent | None] | None = None,
 ) -> list[Agent]:
     """Build agents from a JSON config file (single config or ``agents`` list)."""
     configs = _read_agent_configs(path)
     if tools is None:
         tools = _default_tools()
-    return [build_agent_from_config(config, runtime=runtime, tools=tools) for config in configs]
+    return [
+        build_agent_from_config(
+            config, runtime=runtime, tools=tools, agent_resolver=agent_resolver,
+        )
+        for config in configs
+    ]
 
 
 def register_agents_from_config(
@@ -268,16 +331,22 @@ def register_agents_from_config(
     runtime: Runtime,
     tools: Any = None,
 ) -> list[str]:
-    """Register config agents as factories so sessions can bind memory."""
+    """Register config agents as factories so sessions can bind memory.
+
+    Rejects subagent dependency cycles among the loaded configs at startup.
+    """
     configs = _read_agent_configs(path)
+    _reject_dependency_cycles(_config_dependencies(configs))
     if tools is None:
         tools = _default_tools()
+    resolver = _agent_resolver(registry)
     for config in configs:
         config = dict(config)
         registry.register_factory(
             config["name"],
             lambda memory=None, config=config: build_agent_from_config(
                 config, runtime=runtime, tools=tools, memory=memory,
+                agent_resolver=resolver,
             ),
         )
     return [config["name"] for config in configs]
@@ -888,6 +957,8 @@ class AgentServer(ThreadingHTTPServer):
         self._run_agents: dict[str, str] = {}
         self._run_sessions: dict[str, str] = {}
         self._run_agents_lock = threading.Lock()
+        self._config_names: dict[str, list[str]] = {}
+        self._config_lock = threading.RLock()
         self._load_run_index()
 
     def track_active(self, run_id: str) -> bool:
@@ -921,6 +992,37 @@ class AgentServer(ThreadingHTTPServer):
     def session_for_run(self, run_id: str) -> str | None:
         with self._run_agents_lock:
             return self._run_sessions.get(run_id)
+
+    def note_config_ownership(self, path: str | Path, names: list[str]) -> None:
+        """Record which agent names a config file owns (for hot reload)."""
+        with self._config_lock:
+            self._config_names[str(path)] = list(names)
+
+    def reload_config(self, path: str | Path) -> list[str]:
+        """Rebuild a config file's agents in place; keeps old agents on failure.
+
+        The new config is fully validated (and built) before any registration
+        changes, so a broken edit never leaves the registry half-updated.
+        """
+        key = str(path)
+        agents = load_agents_from_config(
+            path, runtime=self.runtime, agent_resolver=_agent_resolver(self.registry),
+        )
+        new_names = [agent.spec.name for agent in agents]
+        with self._config_lock:
+            owned = list(self._config_names.get(key, []))
+        foreign = [
+            name for name in new_names
+            if self.registry.get(name) is not None and name not in owned
+        ]
+        if foreign:
+            raise ValueError(f"cannot reload config owning other agents' names: {', '.join(foreign)}")
+        for name in owned:
+            self.registry.unregister(name)
+        registered = register_agents_from_config(path, self.registry, runtime=self.runtime)
+        with self._config_lock:
+            self._config_names[key] = registered
+        return registered
 
     def _persist_run_index(self) -> None:
         import json as _json
@@ -1013,6 +1115,32 @@ def _default_frontend_dir() -> Path | None:
     return None
 
 
+def _watch_config_files(server: AgentServer, paths: list[Path], interval: float = 2.0) -> None:
+    """Poll config file mtimes and hot-reload changed agent definitions."""
+    import time as _time
+
+    def mtime(path: Path) -> float | None:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return None
+
+    mtimes = {str(path): mtime(path) for path in paths}
+    while True:
+        _time.sleep(interval)
+        for path in paths:
+            key = str(path)
+            current = mtime(path)
+            if current is None or current == mtimes.get(key):
+                continue
+            mtimes[key] = current
+            try:
+                names = server.reload_config(path)
+                logger.info("hot-reloaded agents from %s: %s", path, ", ".join(names))
+            except Exception as exc:
+                logger.error("config hot-reload failed for %s (keeping previous agents): %s", path, exc)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Serve the agent-core runtime over HTTP.")
     parser.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
@@ -1038,11 +1166,16 @@ def main(argv: list[str] | None = None) -> int:
         try:
             for config_path in args.config:
                 registered = register_agents_from_config(config_path, server.registry, runtime=server.runtime)
+                server.note_config_ownership(config_path, registered)
                 logger.info("loaded agents from %s: %s", config_path, ", ".join(registered))
         except (OSError, ValueError, TypeError) as exc:
             logger.error("failed to load agent config: %s", exc)
             server.server_close()
             return 2
+        watcher = threading.Thread(
+            target=_watch_config_files, args=(server, [Path(p) for p in args.config]), daemon=True,
+        )
+        watcher.start()
     bound_host, bound_port = server.server_address[:2]
     logger.info("agent-core server listening on http://%s:%s", bound_host, bound_port)
     logger.info("agents: %s", ", ".join(server.registry.names()))

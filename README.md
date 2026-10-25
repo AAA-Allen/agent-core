@@ -182,12 +182,13 @@ Agent 节点收到的 `AgentNodeContext` 还包含 `model`、`tools`、`memory` 
 | `template` | 用 `{state_key}` 占位符渲染字符串到状态；只允许顶层键引用，缺失即 FAILED |
 | `tool` | 调用注册工具，参数可为字面量或状态模板；BLOCKED/FAILED 原因码原样透传 |
 | `route_by_value` | 按状态值选择出边路由，可配默认路由，无法解析时 BLOCKED |
+| `subagent` | 委派给另一个已注册 Agent 作为嵌套运行（独立 run_id 与 Trace）；子运行终态原样传播（BLOCKED/FAILED 保持 fail-closed），需要装配方提供 Agent 解析器 |
 
 ```bash
 python -m agent_core.server --config examples/support_agent.json
 ```
 
-配置文件可以是单个 Agent 配置或 `{"agents": [...]}`；装配时校验（未知节点类型、重复 id、非法参数都会在启动期报错），应用可用 `register_node_factory()` 扩充节点类型。`examples/support_agent.json` 是完整示例。
+配置文件可以是单个 Agent 配置或 `{"agents": [...]}`；装配时校验（未知节点类型、重复 id、非法参数都会在启动期报错），应用可用 `register_node_factory()` 扩充节点类型。`examples/support_agent.json` 是完整示例。`--config` 文件被修改时会自动热重载（默认 2 秒轮询）：新配置先完整构建校验，成功才原子替换注册表，失败保留旧版；从配置移除的 Agent 会被注销。配置之间的 `subagent` 依赖环在装载期拒绝。`examples/orchestrator_agent.json` 演示委派编排。
 
 ## HTTP 服务与工作台
 

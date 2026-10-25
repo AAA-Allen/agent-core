@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_core import NodeResult, RunStatus, Runtime, Tool, ToolRegistry
+from agent_core import AgentBuilder, NodeResult, RunStatus, Runtime, Tool, ToolRegistry
 from agent_core.nodes import (
     NODE_FACTORIES,
     build_agent_from_config,
@@ -157,6 +157,89 @@ class ConfigAssemblyTests(unittest.TestCase):
         blocked = agent.run({})
         self.assertEqual(blocked.status, RunStatus.BLOCKED)
         self.assertEqual(blocked.reason_code, "ROUTE_UNRESOLVED")
+
+    def test_subagent_delegates_and_hoists_summary(self) -> None:
+        delegate_config = {
+            "name": "support-triage",
+            "entry": "intake",
+            "nodes": [
+                {"id": "intake", "type": "validate_input",
+                 "params": {"field": "task", "blocked_reason": "EMPTY_TASK", "route": "render"}},
+                {"id": "render", "type": "template",
+                 "params": {"updates": {"summary": "子处理:{task}"}}},
+            ],
+            "edges": [{"source": "intake", "target": "render", "when": "render"}],
+        }
+        runtime = Runtime()
+        delegate = build_agent_from_config(delegate_config, runtime=runtime)
+        orchestrator_config = {
+            "name": "orchestrator",
+            "entry": "intake",
+            "nodes": [
+                {"id": "intake", "type": "validate_input",
+                 "params": {"field": "task", "blocked_reason": "EMPTY_TASK", "route": "delegate"}},
+                {"id": "delegate", "type": "subagent",
+                 "params": {"agent": "support-triage", "input": {"task": "{task}"},
+                            "output_key": "delegated", "summary_into": "delegated_summary",
+                            "route": "render"}},
+                {"id": "render", "type": "template",
+                 "params": {"updates": {"summary": "委派完成:{delegated_summary}"}}},
+            ],
+            "edges": [
+                {"source": "intake", "target": "delegate", "when": "delegate"},
+                {"source": "delegate", "target": "render", "when": "render"},
+            ],
+        }
+        agent = build_agent_from_config(
+            orchestrator_config, runtime=runtime,
+            agent_resolver=lambda name, memory=None: delegate if name == "support-triage" else None,
+        )
+        result = agent.run({"task": "修复工单"})
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(result.state["delegated_summary"], "子处理:修复工单")
+        self.assertEqual(result.state["summary"], "委派完成:子处理:修复工单")
+        delegated = result.state["delegated"]
+        self.assertEqual(delegated["status"], "COMPLETED")
+        self.assertTrue(delegated["run_id"])
+        self.assertNotEqual(delegated["run_id"], result.run_id)
+
+    def test_subagent_propagates_blocked_and_missing(self) -> None:
+        blocked_delegate = (
+            AgentBuilder("blocked-delegate")
+            .add_node("gate", lambda ctx: NodeResult.blocked("DELEGATE_GATE"))
+            .set_entry("gate")
+            .build(runtime=Runtime())
+        )
+        runtime = Runtime()
+        config = {
+            "name": "caller",
+            "entry": "call",
+            "nodes": [
+                {"id": "call", "type": "subagent",
+                 "params": {"agent": "blocked-delegate", "input": {}}},
+            ],
+        }
+        agent = build_agent_from_config(
+            config, runtime=runtime,
+            agent_resolver=lambda name, memory=None: blocked_delegate,
+        )
+        result = agent.run({})
+        self.assertEqual(result.status, RunStatus.BLOCKED)
+        self.assertEqual(result.reason_code, "DELEGATE_GATE")
+
+        missing = build_agent_from_config(config, runtime=runtime, agent_resolver=lambda name, memory=None: None)
+        result = missing.run({})
+        self.assertEqual(result.status, RunStatus.BLOCKED)
+        self.assertEqual(result.reason_code, "SUBAGENT_NOT_FOUND")
+
+    def test_subagent_requires_resolver_at_assembly(self) -> None:
+        config = {
+            "name": "caller",
+            "entry": "call",
+            "nodes": [{"id": "call", "type": "subagent", "params": {"agent": "any"}}],
+        }
+        with self.assertRaises(ValueError):
+            build_agent_from_config(config, runtime=Runtime())
 
     def test_example_config_file_runs_end_to_end(self) -> None:
         config = json.loads(Path("examples/support_agent.json").read_text(encoding="utf-8"))

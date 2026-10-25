@@ -1,0 +1,16 @@
+{
+  "name": "orchestrator",
+  "instructions": "接收任务,委派给 support-triage 子 Agent 处理,并汇总结果。",
+  "description": "Sub-agent orchestration demo: delegates to support-triage and summarizes.",
+  "metadata": {"example": true},
+  "entry": "intake",
+  "nodes": [
+    {"id": "intake", "type": "validate_input", "params": {"field": "task", "blocked_reason": "EMPTY_TASK", "route": "delegate"}},
+    {"id": "delegate", "type": "subagent", "params": {"agent": "support-triage", "input": {"task": "{task}"}, "output_key": "delegated", "summary_into": "delegated_summary", "route": "summarize"}},
+    {"id": "summarize", "type": "template", "params": {"updates": {"summary": "委派完成:{delegated_summary}"}}}
+  ],
+  "edges": [
+    {"source": "intake", "target": "delegate", "when": "delegate"},
+    {"source": "delegate", "target": "summarize", "when": "summarize"}
+  ]
+}
