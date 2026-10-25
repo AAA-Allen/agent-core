@@ -241,3 +241,17 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 244 passed(170 基线 + Agent 外壳 19 + HTTP 服务 30 + 节点库 15 + 契约 10)。
+
+## Session 2026-10-25(续六):列表缓存、嵌套钻取与发布工程
+
+### 已完成
+
+- [x] 运行列表元数据缓存:摘要按记录文件 mtime 缓存(mtime_ns 键),resume 覆盖记录自动失效——列表接口不再对每条记录全量 JSON 解析;Agent 归属仍按次注入(可独立变化)。缓存失效有回归测试(恢复前后列表状态翻转)。
+- [x] 嵌套运行钻取:检查器通用扫描 state 中形如 `{run_id, status, state}` 的嵌套运行引用(不绑定 subagent 专属键名),详情弹窗展示"嵌套运行"区块,点击加载子运行完整检查器(可递归);浏览器 e2e 验证(orchestrator 父→子钻取)。
+- [x] 发布工程:`CHANGELOG.md`(Keep a Changelog 格式,0.2.0/0.1.1);`python -m build` 产出 sdist + wheel 并验证内容(11 模块,无 tests/frontend/examples 混入);构建产物已清理(gitignore 覆盖)。
+- [x] 修复测试竞态:`test_async_run_rejects_reused_run_id` 在终态可见先于活跃占用释放的窗口内会随机命中 RUN_ALREADY_ACTIVE(同样合法),补等待释放后断言 RUN_ID_ALREADY_USED。
+- [x] tag `v0.2.0`。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 245 passed;`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q` 连续三轮 245 passed。

@@ -458,10 +458,25 @@ function submitTask(raw) {
   if (task.mode === 'live') runLiveTask(task); else runDemoTask(task);
 }
 
+function nestedRunRefs(run) {
+  const refs = [];
+  const nested = run.state && typeof run.state === 'object' ? run.state : {};
+  for (const [key, value] of Object.entries(nested)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)
+        && typeof value.run_id === 'string' && typeof value.status === 'string'
+        && value.state && typeof value.state === 'object') {
+      refs.push({ key, run_id: value.run_id, status: value.status, summary: value.state.summary || null });
+    }
+  }
+  return refs;
+}
+
 function runInspectorBody(run, session = null) {
   const nodes = run.trace.filter((event) => event.event_type === 'node.started').map((event) => event.node_id).join(' → ') || '（无节点执行）';
   const traceRows = run.trace.map((event) => `<tr><td>${escapeHtml(event.sequence)}</td><td>${escapeHtml(event.event_type)}</td><td>${escapeHtml(event.node_id || '—')}</td><td>${escapeHtml(event.status)}</td><td>${escapeHtml(event.duration_ms != null ? `${event.duration_ms} ms` : '—')}</td></tr>`).join('');
   const lifecycleRows = (run.lifecycle_events || []).map((event) => `<tr><td>${escapeHtml(event.sequence)}</td><td>${escapeHtml(event.event_type)}</td><td>${escapeHtml(event.from_status || '—')} → ${escapeHtml(event.to_status)}</td><td>${escapeHtml(event.reason_code || '—')}</td></tr>`).join('');
+  const nestedRefs = nestedRunRefs(run);
+  const nestedRows = nestedRefs.map((ref) => `<button class="history-item server-run nested-run" data-nested-run-id="${escapeHtml(ref.run_id)}"><span class="history-icon">${icon(ref.status === 'COMPLETED' ? 'check' : 'triangle-alert')}</span><span class="history-content"><span class="history-name">${escapeHtml(ref.summary || ref.run_id)}</span><span class="history-meta"><span class="mini-status ${ref.status === 'COMPLETED' ? 'completed' : 'failed'}"></span>${escapeHtml(ref.key)} · ${escapeHtml(ref.status)}</span></span></button>`).join('');
   return `<div class="detail-grid">
     <div class="detail-item"><span>运行 ID</span><strong>${escapeHtml(run.run_id)}</strong></div>
     <div class="detail-item"><span>状态</span><strong>${escapeHtml(run.status)}</strong></div>
@@ -471,10 +486,15 @@ function runInspectorBody(run, session = null) {
     <div class="detail-item"><span>Trace 事件</span><strong>${run.trace.length} 条</strong></div>
   </div>
   <div class="detail-output"><strong>执行路径</strong><br />${escapeHtml(nodes)}</div>
+  ${nestedRefs.length ? `<div class="detail-output"><strong>嵌套运行</strong>${nestedRows}</div>` : ''}
   ${traceRows ? `<table class="detail-table"><thead><tr><th>#</th><th>事件</th><th>节点</th><th>状态</th><th>耗时</th></tr></thead><tbody>${traceRows}</tbody></table>` : ''}
   ${lifecycleRows ? `<table class="detail-table"><thead><tr><th>#</th><th>生命周期</th><th>状态迁移</th><th>原因码</th></tr></thead><tbody>${lifecycleRows}</tbody></table>` : ''}
   ${session ? `<div class="detail-output"><strong>会话 ${escapeHtml(session.id)} 的记忆</strong><br /><pre class="detail-json">${escapeHtml(JSON.stringify(session.memory || {}, null, 2))}</pre></div>` : ''}
   <pre class="detail-json">${escapeHtml(JSON.stringify(run.state, null, 2))}</pre>`;
+}
+
+function bindInspectorHandlers(container) {
+  container.querySelectorAll('[data-nested-run-id]').forEach((item) => item.addEventListener('click', () => openServerRunDetail(item.dataset.nestedRunId)));
 }
 
 function openDetail() {
@@ -493,6 +513,7 @@ function openDetail() {
   }
   $('modalTitle').textContent = task.title;
   $('modalBody').innerHTML = body;
+  bindInspectorHandlers($('modalBody'));
   $('detailModal').showModal(); refreshIcons();
 }
 
@@ -550,6 +571,7 @@ async function openServerRunDetail(runId) {
   }
   $('modalTitle').textContent = `服务端运行 ${runId}`;
   $('modalBody').innerHTML = runInspectorBody(record.run, record.session);
+  bindInspectorHandlers($('modalBody'));
   $('detailModal').showModal(); refreshIcons();
 }
 

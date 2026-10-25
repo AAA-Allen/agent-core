@@ -653,6 +653,29 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
         })
 
     def _run_summary(self, run_id: str) -> dict[str, Any] | None:
+        """Build a run summary, reusing cached metadata while the file is unchanged.
+
+        Records are keyed by their file mtime: resume overwrites the record and
+        invalidates the cached entry, so status changes are always visible.
+        The agent attribution is injected per read (it can change independently).
+        """
+        path = self.store.directory / f"{run_id}.json"
+        try:
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            mtime = None
+        with self.server._summary_lock:  # type: ignore[attr-defined]
+            cached = self.server._summary_cache.get(run_id)  # type: ignore[attr-defined]
+        if cached is not None and cached[0] == mtime:
+            entry = dict(cached[1])
+        else:
+            entry = self._load_run_summary(run_id)
+            with self.server._summary_lock:  # type: ignore[attr-defined]
+                self.server._summary_cache[run_id] = (mtime, dict(entry))  # type: ignore[attr-defined]
+        entry["agent"] = self.server.agent_for_run(run_id)  # type: ignore[attr-defined]
+        return entry
+
+    def _load_run_summary(self, run_id: str) -> dict[str, Any]:
         try:
             result = self.store.load(run_id)
         except ValueError:
@@ -664,7 +687,6 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                 "stopped_at": None,
                 "summary": None,
                 "simulated": False,
-                "agent": self.server.agent_for_run(run_id),  # type: ignore[attr-defined]
             }
         state = result.state or {}
         return {
@@ -675,7 +697,6 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             "stopped_at": result.stopped_at,
             "summary": state.get("summary") if isinstance(state, dict) else None,
             "simulated": result.simulated,
-            "agent": self.server.agent_for_run(run_id),  # type: ignore[attr-defined]
         }
 
     def _is_resumable(self, result: Any) -> bool:
@@ -959,6 +980,8 @@ class AgentServer(ThreadingHTTPServer):
         self._run_agents_lock = threading.Lock()
         self._config_names: dict[str, list[str]] = {}
         self._config_lock = threading.RLock()
+        self._summary_cache: dict[str, tuple[int | None, dict[str, Any]]] = {}
+        self._summary_lock = threading.Lock()
         self._load_run_index()
 
     def track_active(self, run_id: str) -> bool:

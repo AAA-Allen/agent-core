@@ -269,11 +269,20 @@ class ServerLifecycleTests(ServerTestBase):
         self.assertTrue(any(item["run_id"] == run_id for item in listing["runs"]))
 
     def test_async_run_rejects_reused_run_id(self) -> None:
+        import time
+
         status, payload = self.post_json(
             "/api/runs", {"agent": "workbench", "input": {"task": "第一次"}, "run_id": "async-reuse", "wait": False},
         )
         self.assertEqual(status, 202)
         self.assertEqual(self._poll_until_terminal("async-reuse"), "COMPLETED")
+        # 终态可见先于后台线程释放活跃占用;等待释放完成后再断言 RUN_ID_ALREADY_USED
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            _, listing = self.request("GET", "/api/runs")
+            if "async-reuse" not in listing["active"]:
+                break
+            time.sleep(0.05)
         status, body = self.post_json(
             "/api/runs", {"agent": "workbench", "input": {"task": "第二次"}, "run_id": "async-reuse", "wait": False},
         )
@@ -428,6 +437,22 @@ class ServerResumeTests(ServerTestBase):
         status, body = self.request("POST", f"/api/runs/{run_id}/resume", json.dumps({}))
         self.assertEqual(status, 409)
         self.assertEqual(body["error"]["code"], "NOT_RESUMABLE")
+
+    def test_run_summary_cache_tracks_resume_overwrite(self) -> None:
+        status, payload = self.post_json(
+            "/api/runs", {"agent": "recovery-router", "input": {"task": "缓存失效验证"}},
+        )
+        run_id = payload["run"]["run_id"]
+        status, first = self.request("GET", "/api/runs?limit=10")
+        entry = [item for item in first["runs"] if item["run_id"] == run_id][0]
+        self.assertEqual(entry["status"], "BLOCKED")
+
+        status, _ = self.request(
+            "POST", f"/api/runs/{run_id}/resume", json.dumps({"state_updates": {"priority": "high"}}),
+        )
+        status, second = self.request("GET", "/api/runs?limit=10")
+        entry = [item for item in second["runs"] if item["run_id"] == run_id][0]
+        self.assertEqual(entry["status"], "COMPLETED")
 
     def test_checkpoint_inspection_endpoint(self) -> None:
         status, payload = self.post_json(
