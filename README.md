@@ -1,15 +1,43 @@
 # agent-core
 
-领域中立（domain-neutral）的 Agent 工作流运行时：把模型、工具、记忆和工作流组合成可审计的执行图。框架核心不含任何业务词汇,任何领域的应用都只是它的一张图。
+一句话:**你定义"做什么"(工作流图),框架负责"怎么跑"**——执行、记录每一步、失败就带着原因码停下、断了能从断点恢复,自带可视化工作台。
+
+![workbench](docs/workbench.png)
+
+## 这是做什么的
+
+一个 **Agent 框架**(Python 库 + HTTP 服务 + Web 工作台,零依赖):
+
+| | |
+|---|---|
+| **输入** | 一段任务数据(JSON,如 `{"task": "整理本周进展;准备周一评审"}`),交给你定义的 Agent 图处理 |
+| **输出** | 结构化执行结果:最终状态 + 每一步的执行轨迹(谁跑了、多久、为什么停)+ 生命周期记录,可持久化、可查询、可恢复 |
+| **可选接入** | 大模型(OpenAI 兼容端点或自训练模型)、你的任意 Python 函数(工具);模型还能自主决定调用哪些工具(`agent_loop` 循环) |
+
+它**不是**:内置 LLM 的聊天产品(模型由你注入,不配置就诚实阻断)、自主规划平台(图由你定义,执行确定性可复现)。适合需要**可控、可审计、失败不糊弄**的多步骤流程;要"全自动 ReAct 魔法"请看别的项目。
+
+## 30 秒上手
+
+```bash
+pip install -e .
+agent-core-server --port 8000        # 启动服务与工作台
+```
+
+浏览器打开 http://127.0.0.1:8000 输入任务即可(上图);或直接调 API:
+
+```bash
+curl -X POST localhost:8000/api/runs -H "Content-Type: application/json" \
+  -d '{"agent": "workbench", "input": {"task": "整理本周进展;准备周一评审"}}'
+```
+
+返回(节选):状态 `COMPLETED`、摘要 `已完成对"整理本周进展;准备周一评审"的 2 个步骤的确定性处理。`,以及完整的 `trace` 事件序列。作为 Python 库用:`AgentBuilder(...).add_node(...).build().run({...})`,契约同上。
 
 ## 安装与启动
 
 ```bash
 pip install -e .            # 安装到当前环境(零依赖,Python >= 3.10)
-agent-core-server --port 8000   # 启动 HTTP 服务与工作台
+agent-core-server --port 8000   # 与上面等价;python -m agent_core.server 亦可
 ```
-
-开发时可直接 `python -m agent_core.server`;两者等价。
 
 ## 它负责什么
 
