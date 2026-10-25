@@ -34,9 +34,10 @@ class OpenAICompatibleModel:
     """Chat-completions adapter for any OpenAI-compatible endpoint.
 
     Configuration is caller-owned (environment variables, config files, or
-    explicit arguments); nothing is read implicitly. ``tools`` passed to
-    ``complete`` is currently ignored by the wire protocol (kept in the
-    ModelAdapter signature for forward compatibility).
+    explicit arguments); nothing is read implicitly. Exactly one HTTP request
+    per ``complete`` call, never retried; failures raise
+    :class:`ModelRequestError` so nodes can map them onto explicit node
+    results instead of leaking raw exceptions into shared state.
     """
 
     _PATH = "/chat/completions"
@@ -67,9 +68,6 @@ class OpenAICompatibleModel:
     def complete(
         self,
         messages: Sequence[Mapping[str, Any]],
-        *,
-        tools: Any = None,
-        context: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         if not isinstance(messages, Sequence) or not messages:
             raise ValueError("messages must be a nonempty sequence")

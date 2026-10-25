@@ -88,10 +88,21 @@ def _multipart(fields: Mapping[str, str], file_field: str, file_bytes: bytes, fi
     return b"".join(parts), boundary
 
 
-def invoke_cxr_predict(base_url: str, image_path: str, *, timeout_seconds: float = 60.0) -> dict[str, Any]:
+def invoke_cxr_predict(
+    base_url: str, image_path: str, *,
+    timeout_seconds: float = 60.0,
+    allowed_roots: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     path = Path(image_path)
     if not path.is_file():
         raise CxrServiceError("IMAGE_NOT_FOUND", f"image file not found: {image_path}")
+    if allowed_roots is not None:
+        resolved = path.resolve()
+        if not any(resolved.is_relative_to(Path(root).resolve()) for root in allowed_roots):
+            raise CxrServiceError(
+                "IMAGE_PATH_FORBIDDEN",
+                f"image path is outside the allowed roots: {image_path}",
+            )
     try:
         image_bytes = path.read_bytes()
     except OSError as exc:
@@ -134,11 +145,25 @@ def invoke_cxr_predict(base_url: str, image_path: str, *, timeout_seconds: float
     }
 
 
-def build_cxr_tools(base_url: str, *, timeout_seconds: float = 60.0) -> ToolRegistry:
+def build_cxr_tools(
+    base_url: str,
+    *,
+    timeout_seconds: float = 60.0,
+    allowed_roots: tuple[str, ...] | None = None,
+) -> ToolRegistry:
+    """Register ``cxr_analyze``; ``allowed_roots`` constrains readable paths.
+
+    Without ``allowed_roots`` the tool reads any local file the process can
+    see and uploads it to the CXR service — acceptable only for trusted
+    single-user local use; production callers should always pass roots.
+    """
     registry = ToolRegistry()
     registry.register(Tool(
         "cxr_analyze",
-        lambda args: invoke_cxr_predict(base_url, args["image_path"], timeout_seconds=timeout_seconds),
+        lambda args: invoke_cxr_predict(
+            base_url, args["image_path"],
+            timeout_seconds=timeout_seconds, allowed_roots=allowed_roots,
+        ),
         required_capabilities=frozenset({"cxr_inference"}),
     ))
     return registry
@@ -151,15 +176,20 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--cxr-base-url", default="http://127.0.0.1:8300")
+    parser.add_argument("--allow-root", action="append", default=None,
+                        help="限制工具可读的目录(可重复);不给则不限制——仅适合本机可信单人场景")
     parser.add_argument("--store-dir", default="outputs/cxr_runs")
     parser.add_argument("--frontend-dir", default=None)
     args = parser.parse_args()
 
     from agent_core import Runtime
     from agent_core.persistence import RunStore
-    from agent_core.server import create_server, register_agents_from_config
+    from agent_core.server import create_server
 
-    tools = build_cxr_tools(args.cxr_base_url)
+    allowed_roots = tuple(args.allow_root) if args.allow_root else None
+    if allowed_roots is None:
+        print("⚠️  未设置 --allow-root:cxr_analyze 可读取任意本地路径。仅限本机可信单人演示。")
+    tools = build_cxr_tools(args.cxr_base_url, allowed_roots=allowed_roots)
     runtime = Runtime(store=RunStore(args.store_dir))
     server = create_server(
         host=args.host, port=args.port, store_dir=args.store_dir,

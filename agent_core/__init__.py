@@ -8,7 +8,7 @@ except Exception:  # pragma: no cover - package not installed (repo checkout)
     __version__ = "0.2.0"
 
 from .persistence import RunStore
-from .runtime import RunContext, RunResult, RunStatus, Step, StepOutcome, StepStatus, TraceEvent, WorkflowRunner
+from .runtime import RunConflictError, RunContext, RunResult, RunStatus, Step, StepOutcome, StepStatus, TraceEvent, WorkflowRunner
 from .tools import Tool, ToolRegistry, ToolResult, ToolStatus, graph_tool_node, tool_step
 from .graph import CompiledGraph, Edge, Graph, Node, NodeContext
 from .results import NodeResult, NodeStatus
@@ -22,6 +22,7 @@ from .agent import (
 
 __all__ = [
     "RunContext", "RunResult", "RunStatus", "Step", "StepOutcome", "StepStatus",
+    "RunConflictError",
     "TraceEvent", "WorkflowRunner", "Tool", "ToolRegistry", "ToolResult", "ToolStatus", "tool_step", "graph_tool_node",
     "RunStore",
     "Graph", "CompiledGraph", "Node", "Edge", "NodeContext", "Runtime",

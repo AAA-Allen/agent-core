@@ -35,10 +35,11 @@ class ServerTestBase(unittest.TestCase):
         self.server.server_close()
         self._thread.join(timeout=5.0)
 
-    def request(self, method: str, path: str, body: str | bytes | None = None):
+    def request(self, method: str, path: str, body: str | bytes | None = None, *, extra_headers: dict | None = None):
         connection = HTTPConnection("127.0.0.1", self.port, timeout=10)
         try:
             headers = {"Content-Type": "application/json"} if body is not None else {}
+            headers.update(extra_headers or {})
             connection.request(method, path, body=body, headers=headers)
             response = connection.getresponse()
             raw = response.read()
@@ -116,6 +117,33 @@ class ServerApiTests(ServerTestBase):
         status, body = self.request("POST", "/api/runs", "")
         self.assertEqual(status, 400)
         self.assertEqual(body["error"]["code"], "EMPTY_BODY")
+
+    def test_state_changing_requests_check_origin_and_host(self) -> None:
+        # 同源(Origin 与 Host 一致的回环地址)与无 Origin(curl/SDK)放行
+        status, _ = self.post_json("/api/runs", {"agent": "workbench", "input": {"task": "ok"}})
+        self.assertEqual(status, 200)
+
+        # 跨站 Origin → 403 FORBIDDEN_ORIGIN
+        status, body = self.request(
+            "POST", "/api/runs", json.dumps({"agent": "workbench", "input": {"task": "x"}}),
+            extra_headers={"Origin": "https://evil.example.com"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "FORBIDDEN_ORIGIN")
+
+        # DNS rebinding 探测:Host 指向外部域名 → 403 FORBIDDEN_HOST
+        status, body = self.request(
+            "POST", "/api/runs", json.dumps({"agent": "workbench", "input": {"task": "x"}}),
+            extra_headers={"Host": "evil.example.com:8123"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "FORBIDDEN_HOST")
+
+        # DELETE 会话同样受保护
+        status, body = self.request(
+            "DELETE", "/api/sessions/whatever", extra_headers={"Origin": "https://evil.example.com"},
+        )
+        self.assertEqual(status, 403)
 
     def test_unknown_paths_return_not_found(self) -> None:
         status, body = self.request("GET", "/api/nothing")

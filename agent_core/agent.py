@@ -20,18 +20,14 @@ from .tools import ToolRegistry
 class ModelAdapter(Protocol):
     """Application supplied model boundary.
 
-    Implementations may return any JSON serializable mapping. The shell does
-    not call the adapter automatically; nodes decide when model work is part
-    of their workflow.
+    Implementations may return any JSON serializable mapping with a string
+    ``content`` entry. The shell does not call the adapter automatically;
+    nodes decide when model work is part of their workflow. Failures should
+    raise; an exception carrying a ``reason_code`` string attribute is
+    reported as that reason code, anything else as ``MODEL_REQUEST_FAILED``.
     """
 
-    def complete(
-        self,
-        messages: Sequence[Mapping[str, Any]],
-        *,
-        tools: ToolRegistry | None = None,
-        context: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any]: ...
+    def complete(self, messages: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]: ...
 
 
 class MemoryStore(Protocol):

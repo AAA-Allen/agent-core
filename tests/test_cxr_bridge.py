@@ -133,6 +133,27 @@ class CxrBridgeTests(unittest.TestCase):
         self.assertEqual(result.reason_code, "IMAGE_NOT_FOUND")
         self.assertEqual(self.fake.requests, [])
 
+    def test_allowed_roots_whitelist(self) -> None:
+        from examples.cxr_bridge import build_cxr_tools as build_with_roots
+        from agent_core.nodes import build_agent_from_config
+
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        secret = Path(outside.name) / "secret.png"
+        secret.write_bytes(b"\x89PNG secret")
+
+        tools = build_with_roots(self.fake.base_url, allowed_roots=(self._tmp.name,))
+        agent = build_agent_from_config(CXR_REVIEW_CONFIG, runtime=Runtime(), tools=tools)
+        # 白名单内 → 正常分析
+        result = agent.run({"task": str(self.image)})
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        # 白名单外 → IMAGE_PATH_FORBIDDEN,且不触服务
+        before = len(self.fake.requests)
+        result = agent.run({"task": str(secret)})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "IMAGE_PATH_FORBIDDEN")
+        self.assertEqual(len(self.fake.requests), before)
+
 
 if __name__ == "__main__":
     unittest.main()

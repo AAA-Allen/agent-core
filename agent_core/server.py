@@ -477,6 +477,7 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlsplit(self.path).path
         try:
+            self._check_request_origin()
             if path == "/api/runs":
                 self._handle_create_run()
             elif (match := _RUNS_PATH.match(path)) is not None and match.group(2) == "/cancel":
@@ -494,6 +495,7 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802
         path = urlsplit(self.path).path
         try:
+            self._check_request_origin()
             if (match := _SESSIONS_PATH.match(path)) is not None:
                 self._handle_clear_session(match.group(1))
             else:
@@ -598,16 +600,32 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _run_conflict_error(exc: ValueError) -> ApiError:
-        message = str(exc)
-        if "already executing" in message:
-            return ApiError(HTTPStatus.CONFLICT, "RUN_ALREADY_ACTIVE", message)
-        if "already has a" in message:
-            return ApiError(HTTPStatus.CONFLICT, "RUN_ID_ALREADY_USED", message)
-        if "cannot resume" in message:
-            return ApiError(HTTPStatus.CONFLICT, "NOT_RESUMABLE", message)
-        if "does not match" in message or "does not exist" in message or "no next_node" in message:
-            return ApiError(HTTPStatus.CONFLICT, "CHECKPOINT_INCOMPATIBLE", message)
-        return ApiError(HTTPStatus.BAD_REQUEST, "INVALID_RUN", message)
+        reason = getattr(exc, "reason_code", None)
+        if isinstance(reason, str) and reason.strip():
+            return ApiError(HTTPStatus.CONFLICT, reason, str(exc))
+        return ApiError(HTTPStatus.BAD_REQUEST, "INVALID_RUN", str(exc))
+
+    def _check_request_origin(self) -> None:
+        """Reject cross-origin and rebound-host state-changing requests.
+
+        Browsers attach an ``Origin`` header to cross-site POSTs, so a
+        mismatched origin means another page is trying to drive this local
+        server (localhost CSRF); a ``Host`` header naming anything other than
+        the bound host or loopback names is a DNS-rebinding probe. Non-browser
+        clients (curl, SDKs) send no Origin and pass.
+        """
+        origin = self.headers.get("Origin")
+        if origin is not None:
+            parsed = urlsplit(origin)
+            origin_host = parsed.hostname or ""
+            allowed_hosts = {"127.0.0.1", "localhost", "::1", self.server.server_address[0]}
+            if origin_host not in allowed_hosts:
+                raise ApiError(HTTPStatus.FORBIDDEN, "FORBIDDEN_ORIGIN", f"origin not allowed: {origin}")
+        host_header = self.headers.get("Host", "")
+        host_name = host_header.partition(":")[0].strip("[]").lower()
+        allowed_hosts = {"127.0.0.1", "localhost", "::1", self.server.server_address[0].lower()}
+        if host_name and host_name not in allowed_hosts:
+            raise ApiError(HTTPStatus.FORBIDDEN, "FORBIDDEN_HOST", f"host not allowed: {host_header}")
 
     def _execute_async_run(self, agent: Agent, input_data: dict[str, Any], run_id: str) -> None:
         try:

@@ -37,6 +37,19 @@ class StepStatus(str, Enum):
     FAILED = "FAILED"
 
 
+class RunConflictError(ValueError):
+    """A run cannot start or resume because of a conflicting run identity.
+
+    ``reason_code`` is a stable machine-readable cause (``RUN_ALREADY_ACTIVE``,
+    ``RUN_ID_ALREADY_USED``, ``CHECKPOINT_INCOMPATIBLE``) so callers can map
+    conflicts without parsing message text.
+    """
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
 @dataclass(frozen=True)
 class StepOutcome:
     status: StepStatus
@@ -356,11 +369,11 @@ class Runtime:
         if not isinstance(graph, CompiledGraph):
             raise TypeError("graph must be a compiled Graph")
         if checkpoint.graph_id != self._graph_id:
-            raise ValueError("checkpoint graph_id does not match runtime graph_id")
+            raise RunConflictError("CHECKPOINT_INCOMPATIBLE", "checkpoint graph_id does not match runtime graph_id")
         if checkpoint.next_node is None:
-            raise ValueError("checkpoint has no next_node to resume")
+            raise RunConflictError("CHECKPOINT_INCOMPATIBLE", "checkpoint has no next_node to resume")
         if checkpoint.next_node not in graph.nodes:
-            raise ValueError("checkpoint next_node does not exist in graph")
+            raise RunConflictError("CHECKPOINT_INCOMPATIBLE", "checkpoint next_node does not exist in graph")
         self._claim_active(checkpoint.run_id)
         try:
             with self._lifecycle_lock:
@@ -480,7 +493,7 @@ class Runtime:
     def _claim_active(self, run_id: str) -> None:
         with self._cancel_lock:
             if run_id in self._active_runs:
-                raise ValueError("run_id is already executing")
+                raise RunConflictError("RUN_ALREADY_ACTIVE", "run_id is already executing")
             self._active_runs.add(run_id)
 
     def _release_active(self, run_id: str) -> None:
@@ -500,12 +513,12 @@ class Runtime:
         _validate_run_id(run_id)
         with self._lifecycle_lock:
             if run_id in self._lifecycles:
-                raise ValueError("run_id already has a lifecycle")
+                raise RunConflictError("RUN_ID_ALREADY_USED", "run_id already has a lifecycle")
         existing = self._load_persisted_lifecycle(run_id)
         if existing is not None:
-            raise ValueError("run_id already has a persisted lifecycle")
+            raise RunConflictError("RUN_ID_ALREADY_USED", "run_id already has a persisted lifecycle")
         if self._store is not None and self._store.load(run_id) is not None:
-            raise ValueError("run_id already has a persisted result")
+            raise RunConflictError("RUN_ID_ALREADY_USED", "run_id already has a persisted result")
         lifecycle = RunLifecycle(run_id)
         lifecycle.transition(LifecycleStatus.RUNNING)
         with self._lifecycle_lock:

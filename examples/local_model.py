@@ -1,7 +1,7 @@
 """Integrating a self-trained or local model without any HTTP layer.
 
 ``ModelAdapter`` is a structural protocol: any object with a
-``complete(messages, *, tools, context) -> Mapping`` method qualifies, and
+``complete(messages) -> Mapping`` method qualifies, and
 ``complete`` is a plain in-process Python call — no HTTP, no SDK, no
 inheritance. The ``llm`` node only relies on this contract:
 
@@ -48,7 +48,7 @@ class LocalTrainedModel:
         # self._model = my_loader("checkpoints/best.pt")
         pass
 
-    def complete(self, messages, *, tools=None, context=None):
+    def complete(self, messages):
         user_text = messages[-1]["content"]
         # 换成你的真实推理调用,例如:
         # tokens = self._tokenizer.encode(user_text)
@@ -63,7 +63,7 @@ class FailingLocalModel:
     class _RequestFailed(Exception):
         reason_code = "LOCAL_MODEL_OOM"
 
-    def complete(self, messages, *, tools=None, context=None):
+    def complete(self, messages):
         raise self._RequestFailed("显存不足")
 
 

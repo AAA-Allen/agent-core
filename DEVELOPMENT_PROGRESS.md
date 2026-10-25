@@ -287,3 +287,17 @@
 ### 真实管线验证(2026-10-25 夜)
 
 用真实 CXR-MARS 完成端到端:导出 cxr14-ft bundle(回读自校验零差异)→ 真实服务(8300,14 类 ConvNeXt,宏 AUC 0.8146)→ cxr_bridge(8766)→ 真实胸片 `00000001_000.png` 经 agent-core 图执行、能力门控、multipart 上传到达真实模型,返回 `Cardiomegaly; Effusion; Infiltration`(塌陷余量 0.077,真实信号);工作台 UI 选择 cxr-reviewer、粘贴图像路径即可驱动全程(截图留证)。修复:桥接启动误将 dict 传给路径参数(改为注册工厂);审阅 Agent 输入字段对齐工作台 `task` 约定。CXR-MARS 的许可边界(像素不出本机、仅回环)在桥接下原样保持——图像只在 127.0.0.1 内流转。
+
+## Session 2026-10-25(续九):批判偿还(第一批)
+
+按自评批判清单偿还四笔债:
+
+- [x] 接口诚实:`ModelAdapter.complete` 移除从未实现的 `tools`/`context` 参数(签名收敛为 `complete(messages)`),接口不再声明未交付能力;示例与适配器同步。
+- [x] 结构化冲突:`RunConflictError(reason_code)`(ValueError 子类)取代消息文本约定,运行时三处冲突抛点改型;服务端错误映射表驱动(消灭 5 处字符串匹配),HTTP 原因码与之前完全一致(回归证明)。
+- [x] 请求来源防护:POST/DELETE 校验 Origin(localhost CSRF)与 Host(DNS rebinding),跨站 403 `FORBIDDEN_ORIGIN`/`FORBIDDEN_HOST`;同源与无 Origin(curl/SDK)放行。
+- [x] 工具路径白名单:`build_cxr_tools(allowed_roots=...)` 限制可读目录,越界 `IMAGE_PATH_FORBIDDEN` 且不触服务;桥接入口 `--allow-root`(可重复),未设置时显式警告。
+- [x] README 新增「API 兼容政策」:0.x 次版本允许破坏性变更(记录于 CHANGELOG)、原因码是唯一可依赖的错误契约、`stopped_at` 语义澄清与 0.3.0 改名计划。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 266 passed。
