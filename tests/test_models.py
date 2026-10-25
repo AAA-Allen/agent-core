@@ -180,6 +180,64 @@ class OpenAICompatibleModelTests(unittest.TestCase):
         reply = self.model().complete_stream([{"role": "user", "content": "hi"}])
         self.assertEqual(reply["content"], "ab")
 
+    def test_complete_with_tools_parses_tool_calls(self) -> None:
+        outer = self.fake
+
+        class ToolCallHandler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length))
+                outer.requests.append({"payload": payload})
+                response = json.dumps({
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [{
+                                "id": "call-9",
+                                "type": "function",
+                                "function": {"name": "echo", "arguments": "{\"value\": \"hi\"}"},
+                            }],
+                        },
+                        "finish_reason": "tool_calls",
+                    }],
+                }).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        # 换上 tool_calls 处理器
+        outer.server.shutdown()
+        outer.server.server_close()
+        outer.server = ThreadingHTTPServer(("127.0.0.1", 0), ToolCallHandler)
+        outer.start()
+
+        reply = self.model().complete_with_tools(
+            [{"role": "user", "content": "hi"}],
+            [{"name": "echo", "description": "回显", "parameters": {"type": "object"}}],
+        )
+        self.assertEqual(reply["tool_calls"],
+                         [{"id": "call-9", "name": "echo", "arguments": {"value": "hi"}}])
+        wire = self.fake.requests[0]["payload"]
+        self.assertEqual(wire["tools"][0]["function"]["name"], "echo")
+        self.assertEqual(wire["tool_choice"], "auto")
+
+    def test_complete_with_tools_validates_inputs(self) -> None:
+        model = self.model()
+        with self.assertRaises(ValueError):
+            model.complete_with_tools([], [{"name": "x"}])
+        with self.assertRaises(ValueError):
+            model.complete_with_tools([{"role": "user", "content": "h"}], [])
+        with self.assertRaises(ValueError):
+            model.complete_with_tools([{"role": "user", "content": "h"}], [{"name": ""}])
+
     def test_complete_stream_http_error_maps_to_reason_code(self) -> None:
         self.fake.status = 401
         with self.assertRaises(ModelRequestError) as caught:

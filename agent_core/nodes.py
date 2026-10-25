@@ -10,6 +10,7 @@ network, or imports application code; dynamic behavior enters through the
 
 from __future__ import annotations
 
+import json
 import re
 from string import Formatter
 from typing import Any, Callable, Mapping
@@ -316,6 +317,115 @@ def llm_node(params: Mapping[str, Any]) -> AgentNode:
     return execute
 
 
+def agent_loop_node(params: Mapping[str, Any]) -> AgentNode:
+    """Run the tool-use loop: the model decides which tools to call.
+
+    ``tools`` declares the schemas the model sees (``name`` plus optional
+    ``description``/``parameters``); execution goes through the registered
+    tool of the same name, gated by ``capabilities`` declared here. Each
+    round is recorded into ``{into}_rounds`` for audit; the final answer is
+    written to ``into``. Fails closed: unsupported model → BLOCKED
+    ``MODEL_TOOLS_UNSUPPORTED``; denied/unknown tool → BLOCKED with the
+    registry's reason code; tool failure → FAILED with its reason code;
+    ``max_rounds`` exhausted → FAILED ``MAX_TOOL_ROUNDS``.
+    """
+    prompt = _require_str(params, "prompt")
+    into = _require_str(params, "into", default="answer")
+    system = params.get("system")
+    if system is not None and not isinstance(system, str):
+        raise ValueError("node param 'system' must be a string when provided")
+    tools = params.get("tools")
+    if not isinstance(tools, list) or not tools:
+        raise ValueError("node param 'tools' must be a nonempty list of tool schemas")
+    schemas: list[dict[str, Any]] = []
+    for schema in tools:
+        if not isinstance(schema, Mapping) or not isinstance(schema.get("name"), str) \
+                or not schema["name"].strip():
+            raise ValueError("each tool schema needs a nonempty string 'name'")
+        entry: dict[str, Any] = {"name": schema["name"]}
+        if "description" in schema:
+            if not isinstance(schema["description"], str):
+                raise ValueError("tool schema 'description' must be a string")
+            entry["description"] = schema["description"]
+        if "parameters" in schema:
+            if not isinstance(schema["parameters"], Mapping):
+                raise ValueError("tool schema 'parameters' must be a mapping")
+            entry["parameters"] = dict(schema["parameters"])
+        schemas.append(entry)
+    capabilities = params.get("capabilities", [])
+    if not isinstance(capabilities, list) or any(
+        not isinstance(item, str) or not item.strip() for item in capabilities
+    ):
+        raise ValueError("node param 'capabilities' must be a list of nonempty strings")
+    granted = frozenset(capabilities)
+    max_rounds = params.get("max_rounds", 4)
+    if not isinstance(max_rounds, int) or isinstance(max_rounds, bool) or max_rounds <= 0:
+        raise ValueError("node param 'max_rounds' must be a positive integer")
+    route = _require_route(params)
+
+    def execute(ctx: AgentNodeContext) -> NodeResult:
+        if ctx.model is None:
+            return NodeResult.blocked("MODEL_NOT_CONFIGURED")
+        tool_fn = getattr(ctx.model, "complete_with_tools", None)
+        if not callable(tool_fn):
+            return NodeResult.blocked("MODEL_TOOLS_UNSUPPORTED")
+        if ctx.tools is None:
+            return NodeResult.failed("TOOL_REGISTRY_MISSING")
+        try:
+            rendered_prompt = _format_from_state(prompt, ctx.state)
+            rendered_system = _format_from_state(system, ctx.state) if system else None
+        except KeyError:
+            return NodeResult.failed("PROMPT_KEY_MISSING")
+        messages: list[dict[str, Any]] = []
+        if rendered_system:
+            messages.append({"role": "system", "content": rendered_system})
+        messages.append({"role": "user", "content": rendered_prompt})
+        rounds: list[dict[str, Any]] = []
+        for _round in range(max_rounds):
+            try:
+                reply = tool_fn(messages, schemas)
+            except Exception as exc:
+                reason = getattr(exc, "reason_code", None)
+                if isinstance(reason, str) and reason.strip():
+                    return NodeResult.failed(reason)
+                return NodeResult.failed("MODEL_REQUEST_FAILED")
+            tool_calls = reply.get("tool_calls") if isinstance(reply, Mapping) else None
+            if not tool_calls:
+                content = reply.get("content") if isinstance(reply, Mapping) else None
+                if not isinstance(content, str):
+                    return NodeResult.failed("MODEL_INVALID_REPLY")
+                return NodeResult.success({into: content, f"{into}_rounds": rounds}, route=route)
+            if not isinstance(tool_calls, list):
+                return NodeResult.failed("MODEL_INVALID_REPLY")
+            messages.append({
+                "role": "assistant",
+                "content": reply.get("content"),
+                "tool_calls": [
+                    {
+                        "id": call["id"],
+                        "type": "function",
+                        "function": {"name": call["name"], "arguments": json.dumps(call["arguments"], ensure_ascii=False)},
+                    }
+                    for call in tool_calls
+                ],
+            })
+            for call in tool_calls:
+                result = ctx.tools.invoke(call["name"], call["arguments"], granted_capabilities=granted)
+                if result.status.value == "BLOCKED":
+                    return NodeResult.blocked(result.reason_code or "TOOL_BLOCKED")
+                if result.status.value == "FAILED":
+                    return NodeResult.failed(result.reason_code or "TOOL_FAILED")
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": json.dumps(dict(result.output), ensure_ascii=False),
+                })
+                rounds.append({"tool": call["name"], "arguments": dict(call["arguments"]), "output": dict(result.output)})
+        return NodeResult.failed("MAX_TOOL_ROUNDS")
+
+    return execute
+
+
 NODE_FACTORIES: dict[str, AgentNodeFactory] = {
     "validate_input": validate_input_node,
     "split_steps": split_steps_node,
@@ -323,6 +433,7 @@ NODE_FACTORIES: dict[str, AgentNodeFactory] = {
     "tool": tool_node,
     "route_by_value": route_by_value_node,
     "llm": llm_node,
+    "agent_loop": agent_loop_node,
 }
 
 

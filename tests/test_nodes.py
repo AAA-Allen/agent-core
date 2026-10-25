@@ -392,5 +392,141 @@ class ConfigValidationTests(unittest.TestCase):
             NODE_FACTORIES.pop("upper_case", None)
 
 
+class AgentLoopTests(unittest.TestCase):
+    LOOP_CONFIG = {
+        "name": "tool-agent",
+        "entry": "loop",
+        "nodes": [{
+            "id": "loop", "type": "agent_loop",
+            "params": {
+                "prompt": "问题:{q}",
+                "tools": [{"name": "echo", "description": "回显输入", "parameters": {"value": "string"}}],
+                "capabilities": ["basic"],
+                "max_rounds": 3,
+                "into": "answer",
+            },
+        }],
+    }
+
+    def setUp(self) -> None:
+        self.registry = ToolRegistry()
+        self.registry.register(Tool("echo", lambda args: {"echo": args["value"]}))
+        self.runtime = Runtime()
+
+    def build(self, model, config=None):
+        return build_agent_from_config(config or self.LOOP_CONFIG, runtime=self.runtime,
+                                       tools=self.registry, model=model)
+
+    def test_loop_calls_tool_then_answers_with_audit(self) -> None:
+        class Model:
+            def __init__(self):
+                self.calls = []
+
+            def complete_with_tools(self, messages, tool_schemas):
+                self.calls.append(([dict(m) for m in messages], [dict(s) for s in tool_schemas]))
+                if len(self.calls) == 1:
+                    return {"tool_calls": [{"id": "call-1", "name": "echo", "arguments": {"value": "hi"}}]}
+                return {"content": "工具说:hi"}
+
+        model = Model()
+        result = self.build(model).run({"q": "测试"})
+        self.assertEqual(result.status, RunStatus.COMPLETED)
+        self.assertEqual(result.state["answer"], "工具说:hi")
+        self.assertEqual(result.state["answer_rounds"],
+                         [{"tool": "echo", "arguments": {"value": "hi"}, "output": {"echo": "hi"}}])
+        # 第二轮的 messages 含 assistant 工具调用与 tool 结果
+        second_messages = model.calls[1][0]
+        self.assertEqual(second_messages[-2]["role"], "assistant")
+        self.assertEqual(second_messages[-2]["tool_calls"][0]["function"]["name"], "echo")
+        self.assertEqual(second_messages[-1]["role"], "tool")
+        self.assertEqual(second_messages[-1]["tool_call_id"], "call-1")
+        # 模型看到声明的 schema
+        self.assertEqual(model.calls[0][1][0]["name"], "echo")
+
+    def test_capability_must_be_declared(self) -> None:
+        self.registry = ToolRegistry()
+        self.registry.register(Tool("echo", lambda args: {"echo": args["value"]},
+                                    required_capabilities=frozenset({"secret"})))
+
+        class Model:
+            def complete_with_tools(self, messages, schemas):
+                return {"tool_calls": [{"id": "c1", "name": "echo", "arguments": {"value": "x"}}]}
+
+        result = self.build(Model()).run({"q": "x"})
+        self.assertEqual(result.status, RunStatus.BLOCKED)
+        self.assertEqual(result.reason_code, "CAPABILITY_DENIED")
+
+    def test_unknown_tool_blocks(self) -> None:
+        class Model:
+            def complete_with_tools(self, messages, schemas):
+                return {"tool_calls": [{"id": "c1", "name": "ghost", "arguments": {}}]}
+
+        result = self.build(Model()).run({"q": "x"})
+        self.assertEqual(result.status, RunStatus.BLOCKED)
+        self.assertEqual(result.reason_code, "TOOL_NOT_FOUND")
+
+    def test_tool_failure_propagates_reason_code(self) -> None:
+        class Boom(Exception):
+            reason_code = "ECHO_EXPLODED"
+
+        self.registry = ToolRegistry()
+        self.registry.register(Tool("echo", lambda args: (_ for _ in ()).throw(Boom())))
+
+        class Model:
+            def complete_with_tools(self, messages, schemas):
+                return {"tool_calls": [{"id": "c1", "name": "echo", "arguments": {}}]}
+
+        result = self.build(Model()).run({"q": "x"})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "ECHO_EXPLODED")
+
+    def test_max_rounds_exhaustion_fails(self) -> None:
+        class Model:
+            def complete_with_tools(self, messages, schemas):
+                return {"tool_calls": [{"id": "call-again", "name": "echo", "arguments": {"value": "x"}}]}
+
+        result = self.build(Model()).run({"q": "x"})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "MAX_TOOL_ROUNDS")
+
+    def test_model_without_tool_support_blocks(self) -> None:
+        class PlainModel:
+            def complete(self, messages):
+                return {"content": "no tools here"}
+
+        result = self.build(PlainModel()).run({"q": "x"})
+        self.assertEqual(result.status, RunStatus.BLOCKED)
+        self.assertEqual(result.reason_code, "MODEL_TOOLS_UNSUPPORTED")
+
+    def test_model_error_maps_reason_code(self) -> None:
+        from agent_core.models import ModelRequestError
+
+        class Model:
+            def complete_with_tools(self, messages, schemas):
+                raise ModelRequestError("MODEL_TIMEOUT", "timed out")
+
+        result = self.build(Model()).run({"q": "x"})
+        self.assertEqual(result.status, RunStatus.FAILED)
+        self.assertEqual(result.reason_code, "MODEL_TIMEOUT")
+
+    def test_assembly_validates_params(self) -> None:
+        for bad in (
+            {"tools": []},
+            {"tools": "echo"},
+            {"tools": [{"name": ""}]},
+            {"tools": [{"name": "echo", "parameters": "x"}]},
+            {"capabilities": "basic"},
+            {"max_rounds": 0},
+            {"max_rounds": True},
+        ):
+            config = {
+                "name": "bad", "entry": "loop",
+                "nodes": [{"id": "loop", "type": "agent_loop",
+                           "params": {"prompt": "p", **bad}}],
+            }
+            with self.assertRaises(ValueError, msg=bad):
+                build_agent_from_config(config, runtime=Runtime(), tools=self.registry)
+
+
 if __name__ == "__main__":
     unittest.main()

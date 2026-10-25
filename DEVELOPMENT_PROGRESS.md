@@ -324,3 +324,14 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 279 passed,连续五轮稳定。
+
+## Session 2026-10-25(续十三):领域桥接撤除与工具使用循环
+
+- [x] 撤除领域桥接示例(定位收窄:本仓库只负责 agent 系统、框架与页面):删除桥接示例与测试,清洗 README/CHANGELOG/进度文档提及;通用的工具能力声明(`capabilities`)与原因码透传保留并以通用测试覆盖。误提交的文档包已从提交中移除并加入 .gitignore;v0.3.0 标签重打于干净提交。
+- [x] `complete_with_tools(messages, tool_schemas)` 适配器可选约定 + OpenAI 线格式实现(`tools`/`tool_choice: "auto"`,tool_calls 解析含 arguments JSON 校验)。
+- [x] `agent_loop` 声明式节点:schema 在配置显式声明(模型可见的全部),执行经 `ToolRegistry` 受 `capabilities` 门控;每轮(assistant 工具调用 + tool 结果)按 OpenAI 消息约定回喂;`{into}_rounds` 审计进状态;`max_rounds` 默认 4;fail-closed 全分支(未支持模型 BLOCKED/越权 BLOCKED/未知工具 BLOCKED/工具失败透传/轮次耗尽 FAILED)。
+- [x] 测试 10 项:循环成功带审计与消息序列断言、能力门控、未知工具、工具失败透传、轮次上限、无工具支持、模型错误映射、装配校验、适配器线格式与输入校验。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 285 passed。

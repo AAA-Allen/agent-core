@@ -2,6 +2,12 @@
 
 本项目遵循语义化版本。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### 新增
+
+- **工具使用循环**:适配器可选 `complete_with_tools(messages, tool_schemas)` 约定(内置适配器实现 OpenAI `tools`/`tool_choice` 线格式);声明式 `agent_loop` 节点驱动模型自主调用工具的完整循环——schema 配置显式声明、执行走注册表并受 `capabilities` 门控、每轮写入 `{into}_rounds` 审计、`max_rounds` 封顶;fail-closed:越权/未知工具 BLOCKED、工具失败原因码透传、轮次耗尽 FAILED。
+
 ## [0.3.0] - 2026-10-25
 
 模型接入、领域工具桥接与工程硬化:从确定性编排平台到可接真实智能的运行时。

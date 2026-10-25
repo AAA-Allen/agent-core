@@ -198,6 +198,20 @@ fail-closed 语义:未绑定模型 → BLOCKED `MODEL_NOT_CONFIGURED`(不伪装)
 
 适配器可实现**可选的** `complete_stream(messages, on_delta)` 约定:逐块调用 `on_delta(text)` 并返回与 `complete` 相同的映射。内置 `OpenAICompatibleModel` 已实现(标准库逐行解析端点 SSE,`stream: true`);`llm` 节点检测到该方法时优先使用,否则无缝回退 `complete`——协议只声明真正存在的能力。每个增量会进入进程内 `TokenBus`(按 run_id 键控、历史回放、容量上限),`GET /api/runs/{id}/events/stream` 在生命周期帧之外转发 `event: token` 帧,工作台时间线下方实时渲染模型输出。跨进程流式不在范围内。
 
+### 工具使用循环
+
+适配器还可实现可选的 `complete_with_tools(messages, tool_schemas)` 约定:模型返回 `{"content": ...}`(最终答案)或 `{"tool_calls": [{"id", "name", "arguments"}]}`(请求调用工具)。内置适配器已实现 OpenAI 线格式(`tools` + `tool_choice: "auto"`)。声明式 `agent_loop` 节点用它驱动完整的工具循环:
+
+```json
+{"id": "solve", "type": "agent_loop", "params": {
+  "prompt": "问题:{task}",
+  "tools": [{"name": "text_stats", "description": "统计文本长度与词数"}],
+  "capabilities": [], "max_rounds": 4, "into": "answer"
+}}
+```
+
+模型看到的 schema 在配置里显式声明(它就是模型能"看见"的全部);执行仍走 `ToolRegistry` 并受 `capabilities` 门控——模型请求越权工具会被 BLOCKED `CAPABILITY_DENIED`,请求未注册工具 BLOCKED `TOOL_NOT_FOUND`,工具失败原因码原样透传,`max_rounds` 耗尽 FAILED `MAX_TOOL_ROUNDS`。每轮的工具调用与结果记录在 `{into}_rounds` 状态键里,检查器可见。
+
 ### 自训练 / 本地模型
 
 `ModelAdapter` 是结构化协议,不要求继承、不绑定 HTTP——任何有 `complete(messages, *, tools, context) -> {"content": str}` 方法的对象都是合法适配器。三种接入路径:
@@ -219,6 +233,8 @@ fail-closed 语义:未绑定模型 → BLOCKED `MODEL_NOT_CONFIGURED`(不伪装)
 | `template` | 用 `{state_key}` 占位符渲染字符串到状态；只允许顶层键引用，缺失即 FAILED |
 | `tool` | 调用注册工具，参数可为字面量或状态模板；BLOCKED/FAILED 原因码原样透传 |
 | `route_by_value` | 按状态值选择出边路由，可配默认路由，无法解析时 BLOCKED |
+| `llm` | 渲染模板提示调用模型,回复写入状态键(详见「模型接入」与「流式输出」) |
+| `agent_loop` | 工具使用循环:`tools` 声明模型可见的 schema,模型自行决定调用;框架按 `capabilities` 门控执行并回喂,循环至最终答案;每轮写入 `{into}_rounds` 审计,`max_rounds`(默认 4)封顶 |
 | `subagent` | 委派给另一个已注册 Agent 作为嵌套运行（独立 run_id 与 Trace）；子运行终态原样传播（BLOCKED/FAILED 保持 fail-closed），需要装配方提供 Agent 解析器 |
 
 ```bash

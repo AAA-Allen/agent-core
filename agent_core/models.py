@@ -110,6 +110,98 @@ class OpenAICompatibleModel:
         content, usage = self._extract(parsed)
         return {"content": content, "model": self.model, "usage": usage}
 
+    def complete_with_tools(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        tool_schemas: Sequence[Mapping[str, Any]],
+    ) -> Mapping[str, Any]:
+        """Tool-use variant: let the model request tool calls.
+
+        ``tool_schemas`` are OpenAI-style function definitions
+        (``{"name", "description", "parameters"}``). Returns either
+        ``{"content": str}`` (final answer, tool_calls absent) or
+        ``{"tool_calls": [{"id", "name", "arguments": dict}]}``. Optional
+        adapter convention — callers must handle models without it.
+        """
+        if not isinstance(messages, Sequence) or not messages:
+            raise ValueError("messages must be a nonempty sequence")
+        if not isinstance(tool_schemas, Sequence) or not tool_schemas:
+            raise ValueError("tool_schemas must be a nonempty sequence")
+        wire_tools = []
+        for schema in tool_schemas:
+            if not isinstance(schema, Mapping) or not isinstance(schema.get("name"), str) \
+                    or not schema["name"].strip():
+                raise ValueError("each tool schema needs a nonempty string 'name'")
+            function = {"name": schema["name"]}
+            if "description" in schema:
+                function["description"] = schema["description"]
+            if "parameters" in schema:
+                function["parameters"] = schema["parameters"]
+            wire_tools.append({"type": "function", "function": function})
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [dict(message) for message in messages],
+            "tools": wire_tools,
+            "tool_choice": "auto",
+        }, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        request = Request(
+            self.base_url + self._PATH,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                parsed = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            raise ModelRequestError(
+                "MODEL_HTTP_ERROR", f"model endpoint returned HTTP {exc.code}"
+            ) from None
+        except URLError as exc:
+            reason = getattr(exc, "reason", None)
+            code = "MODEL_TIMEOUT" if isinstance(reason, TimeoutError) else "MODEL_UNREACHABLE"
+            raise ModelRequestError(code, f"model endpoint unreachable: {type(reason).__name__}") from None
+        except OSError as exc:
+            raise ModelRequestError("MODEL_TRANSPORT_ERROR", f"model transport failed: {type(exc).__name__}") from None
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ModelRequestError("MODEL_INVALID_RESPONSE", "model response is not valid JSON") from None
+
+        choices = parsed.get("choices") if isinstance(parsed, Mapping) else None
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
+            raise ModelRequestError("MODEL_INVALID_RESPONSE", "model response has no choices")
+        message = choices[0].get("message")
+        if not isinstance(message, Mapping):
+            raise ModelRequestError("MODEL_INVALID_RESPONSE", "model choice has no message")
+        tool_calls = message.get("tool_calls")
+        if tool_calls is None:
+            content = message.get("content")
+            if not isinstance(content, str):
+                raise ModelRequestError("MODEL_INVALID_RESPONSE", "model message has no content")
+            return {"content": content, "model": self.model}
+        if not isinstance(tool_calls, list) or not tool_calls:
+            raise ModelRequestError("MODEL_INVALID_RESPONSE", "tool_calls must be a nonempty list")
+        parsed_calls = []
+        for call in tool_calls:
+            if not isinstance(call, Mapping):
+                raise ModelRequestError("MODEL_INVALID_RESPONSE", "tool call must be an object")
+            call_id = call.get("id")
+            function = call.get("function")
+            if not isinstance(call_id, str) or not isinstance(function, Mapping) \
+                    or not isinstance(function.get("name"), str):
+                raise ModelRequestError("MODEL_INVALID_RESPONSE", "tool call needs id and function name")
+            raw_arguments = function.get("arguments", "{}")
+            try:
+                arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+            except json.JSONDecodeError:
+                raise ModelRequestError("MODEL_INVALID_RESPONSE", "tool call arguments is not valid JSON") from None
+            if not isinstance(arguments, Mapping):
+                raise ModelRequestError("MODEL_INVALID_RESPONSE", "tool call arguments must be an object")
+            parsed_calls.append({"id": call_id, "name": function["name"], "arguments": dict(arguments)})
+        return {"tool_calls": parsed_calls, "model": self.model}
+
     def complete_stream(
         self,
         messages: Sequence[Mapping[str, Any]],
