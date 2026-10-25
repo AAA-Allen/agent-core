@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
+from . import __version__
 from .agent import Agent, InMemoryMemory
 from .nodes import build_agent_from_config
 from .persistence import RunStore, _lifecycle_event_to_dict
@@ -309,7 +310,7 @@ def _result_payload(result: Any, *, resumable: bool = False) -> dict[str, Any]:
 
 
 class RuntimeAPIHandler(BaseHTTPRequestHandler):
-    server_version = "AgentCoreServer/0.1"
+    server_version = f"AgentCoreServer/{__version__}"
     protocol_version = "HTTP/1.1"
 
     # -- helpers ---------------------------------------------------------
@@ -432,7 +433,7 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
     def _handle_health(self) -> None:
         self._send_json(HTTPStatus.OK, {
             "status": "ok",
-            "runtime": "agent-core/0.1",
+            "runtime": f"agent-core/{__version__}",
             "agents": self.registry.names(),
         })
 
