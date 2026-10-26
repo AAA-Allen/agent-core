@@ -8,6 +8,8 @@ agent's instructions, tools, model, memory, and graph.
 
 from __future__ import annotations
 
+import copy
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
@@ -45,23 +47,24 @@ class InMemoryMemory:
         if initial is not None and not isinstance(initial, Mapping):
             raise TypeError("initial memory must be a mapping")
         self._values = _json_snapshot(initial or {})
+        self._lock = threading.RLock()
 
     def read(self, key: str, default: Any = None) -> Any:
         if not isinstance(key, str) or not key.strip():
             raise ValueError("memory key must be nonempty")
-        value = self._values.get(key, default)
-        if isinstance(value, Mapping):
-            return _json_snapshot(value)
-        return value
+        with self._lock:
+            return copy.deepcopy(self._values.get(key, default))
 
     def write(self, key: str, value: Any) -> None:
         if not isinstance(key, str) or not key.strip():
             raise ValueError("memory key must be nonempty")
-        self._values[key] = _json_snapshot({"value": value})["value"]
+        with self._lock:
+            self._values[key] = _json_snapshot({"value": value})["value"]
 
     def snapshot(self) -> dict[str, Any]:
         """Return an isolated copy of all stored values for inspection."""
-        return _json_snapshot(self._values)
+        with self._lock:
+            return _json_snapshot(self._values)
 
 
 @dataclass(frozen=True)

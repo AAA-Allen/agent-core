@@ -117,7 +117,13 @@ class AgentServer(ThreadingHTTPServer):
         self.sessions = SessionManager()
         self.run_index_path = store.directory / ".agent_index.json"
         self._instance_lock = StoreInstanceLock(store.directory)
-        self._instance_lock.acquire()
+        try:
+            self._instance_lock.acquire()
+        except Exception:
+            # The listening socket is created by TCPServer before the store
+            # lock is acquired. Close it when construction is rejected.
+            super().server_close()
+            raise
         self._active_runs: set[str] = set()
         self._active_lock = threading.Lock()
         self._run_agents: dict[str, str] = {}

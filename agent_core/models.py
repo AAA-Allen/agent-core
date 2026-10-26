@@ -30,6 +30,12 @@ class ModelRequestError(Exception):
         self.reason_code = reason_code
 
 
+def _http_error_reason(code: int) -> str:
+    # Local proxy failures commonly surface as gateway errors even when the
+    # target port has no listener; expose those as transport reachability.
+    return "MODEL_UNREACHABLE" if code in (502, 503, 504) else "MODEL_HTTP_ERROR"
+
+
 class OpenAICompatibleModel:
     """Chat-completions adapter for any OpenAI-compatible endpoint.
 
@@ -92,8 +98,12 @@ class OpenAICompatibleModel:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 body = response.read(self._MAX_RESPONSE_BYTES + 1)
         except HTTPError as exc:
+            try:
+                code = exc.code
+            finally:
+                exc.close()
             raise ModelRequestError(
-                "MODEL_HTTP_ERROR", f"model endpoint returned HTTP {exc.code}"
+                _http_error_reason(code), f"model endpoint returned HTTP {code}"
             ) from None
         except URLError as exc:
             reason = getattr(exc, "reason", None)
@@ -157,8 +167,12 @@ class OpenAICompatibleModel:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 parsed = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
+            try:
+                code = exc.code
+            finally:
+                exc.close()
             raise ModelRequestError(
-                "MODEL_HTTP_ERROR", f"model endpoint returned HTTP {exc.code}"
+                _http_error_reason(code), f"model endpoint returned HTTP {code}"
             ) from None
         except URLError as exc:
             reason = getattr(exc, "reason", None)
@@ -238,8 +252,12 @@ class OpenAICompatibleModel:
         try:
             response = urlopen(request, timeout=self.timeout_seconds)
         except HTTPError as exc:
+            try:
+                code = exc.code
+            finally:
+                exc.close()
             raise ModelRequestError(
-                "MODEL_HTTP_ERROR", f"model endpoint returned HTTP {exc.code}"
+                _http_error_reason(code), f"model endpoint returned HTTP {code}"
             ) from None
         except URLError as exc:
             reason = getattr(exc, "reason", None)

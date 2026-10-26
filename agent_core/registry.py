@@ -99,6 +99,7 @@ class SessionManager:
 
     def __init__(self) -> None:
         self._memories: dict[str, InMemoryMemory] = {}
+        self._run_locks: dict[str, threading.RLock] = {}
         self._lock = threading.RLock()
 
     def memory_for(self, session_id: str) -> InMemoryMemory:
@@ -110,6 +111,16 @@ class SessionManager:
                 self._memories[session_id] = memory
             return memory
 
+    def run_lock(self, session_id: str) -> threading.RLock:
+        """Return the lock serializing runs that share one session."""
+        _validate_run_id(session_id)
+        with self._lock:
+            lock = self._run_locks.get(session_id)
+            if lock is None:
+                lock = threading.RLock()
+                self._run_locks[session_id] = lock
+            return lock
+
     def snapshot(self, session_id: str) -> dict[str, Any] | None:
         with self._lock:
             memory = self._memories.get(session_id)
@@ -120,11 +131,20 @@ class SessionManager:
             return sorted(self._memories)
 
     def clear(self, session_id: str) -> bool:
+        _validate_run_id(session_id)
         with self._lock:
-            if session_id in self._memories:
-                del self._memories[session_id]
-                return True
-            return False
+            run_lock = self._run_locks.get(session_id)
+        if run_lock is not None:
+            run_lock.acquire()
+        with self._lock:
+            try:
+                if session_id in self._memories:
+                    del self._memories[session_id]
+                    return True
+                return False
+            finally:
+                if run_lock is not None:
+                    run_lock.release()
 
 
 

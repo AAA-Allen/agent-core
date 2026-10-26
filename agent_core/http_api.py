@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import threading
+from contextlib import nullcontext
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
@@ -241,7 +242,9 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                 run_id = uuid4().hex
             self.server.record_run_agent(run_id, agent_name, session_id)  # type: ignore[attr-defined]
             try:
-                result = agent.run(input_data, run_id=run_id).run
+                lock = self.server.sessions.run_lock(session_id) if session_id else nullcontext()
+                with lock:
+                    result = agent.run(input_data, run_id=run_id).run
             except TypeError as exc:
                 raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_INPUT", str(exc))
             except ValueError as exc:
@@ -266,7 +269,7 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             self.server.release_active(run_id)  # type: ignore[attr-defined]
             raise ApiError(HTTPStatus.CONFLICT, "RUN_ID_ALREADY_USED", f"run_id already has a lifecycle: {run_id}")
         worker = threading.Thread(
-            target=self._execute_async_run, args=(agent, input_data, run_id), daemon=True,
+            target=self._execute_async_run, args=(agent, input_data, run_id, session_id), daemon=True,
         )
         worker.start()
         self._send_json(HTTPStatus.ACCEPTED, {
@@ -310,9 +313,13 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
         if host_name and host_name not in allowed_hosts:
             raise ApiError(HTTPStatus.FORBIDDEN, "FORBIDDEN_HOST", f"host not allowed: {host_header}")
 
-    def _execute_async_run(self, agent: Agent, input_data: dict[str, Any], run_id: str) -> None:
+    def _execute_async_run(
+        self, agent: Agent, input_data: dict[str, Any], run_id: str, session_id: str | None,
+    ) -> None:
         try:
-            agent.run(input_data, run_id=run_id)
+            lock = self.server.sessions.run_lock(session_id) if session_id else nullcontext()
+            with lock:
+                agent.run(input_data, run_id=run_id)
         except Exception:
             logger.exception("async run %s failed", run_id)
         finally:
@@ -482,7 +489,9 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
         agent_name = self.server.agent_for_run(run_id)  # type: ignore[attr-defined]
         if agent_name is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "RUN_AGENT_UNKNOWN", f"no registered agent for run: {run_id}")
-        agent = self.registry.get(agent_name)
+        session_id = self.server.session_for_run(run_id)  # type: ignore[attr-defined]
+        memory = self.server.sessions.memory_for(session_id) if session_id else None  # type: ignore[attr-defined]
+        agent = self.registry.build(agent_name, memory=memory)
         if agent is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "UNKNOWN_AGENT", f"unknown agent: {agent_name}")
         if status.value in ("RUNNING", "PENDING"):
@@ -510,7 +519,9 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
                 checkpoint, state=merged, state_version=checkpoint.state_version + 1,
             )
         try:
-            result = self.runtime.resume(agent.graph, checkpoint)
+            lock = self.server.sessions.run_lock(session_id) if session_id else nullcontext()
+            with lock:
+                result = self.runtime.resume(agent.graph, checkpoint)
         except ValueError as exc:
             raise self._run_conflict_error(exc)
         self._send_json(HTTPStatus.OK, {

@@ -428,6 +428,16 @@ def agent_loop_node(params: Mapping[str, Any]) -> AgentNode:
                 return NodeResult.success({into: content, f"{into}_rounds": rounds}, route=route)
             if not isinstance(tool_calls, list):
                 return NodeResult.failed("MODEL_INVALID_REPLY")
+            for call in tool_calls:
+                if (
+                    not isinstance(call, Mapping)
+                    or not isinstance(call.get("id"), str)
+                    or not call["id"].strip()
+                    or not isinstance(call.get("name"), str)
+                    or not call["name"].strip()
+                    or not isinstance(call.get("arguments"), Mapping)
+                ):
+                    return NodeResult.failed("MODEL_INVALID_REPLY")
             messages.append({
                 "role": "assistant",
                 "content": reply.get("content"),
