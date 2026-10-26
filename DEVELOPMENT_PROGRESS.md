@@ -345,3 +345,12 @@
 ### Latest Verification
 
 `python -m unittest discover -s tests -q` 288 passed。
+
+## Session 2026-10-25(续十五):会话聊天视图
+
+- [x] 工作台:带会话历史的完成运行渲染为聊天气泡视图(用户右/助手左,会话消息计数;`session.memory.messages` 驱动,渲染前清理旧节点防重复);时间线保留消息计数头。
+- [x] 浏览器 e2e:注入 4 条会话消息 → 4 气泡正确分侧、无重复渲染(截图留证)。
+
+### Latest Verification
+
+`python -m unittest discover -s tests -q` 288 passed。

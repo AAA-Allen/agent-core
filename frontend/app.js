@@ -215,6 +215,10 @@ function liveTimeline(task) {
   return steps;
 }
 
+function chatHtml(messages) {
+  return `<div class="chat-thread">${messages.map((m) => `<div class="chat-row ${m.role}"><span class="chat-role">${m.role === 'user' ? '你' : '助手'}</span><div class="chat-bubble">${escapeHtml(m.content)}</div></div>`).join('')}</div>`;
+}
+
 function updateStreamOutput(task) {
   let box = $('streamOutput');
   if (!task.streamText) { if (box) box.remove(); return; }
@@ -232,13 +236,20 @@ function updateStreamOutput(task) {
 }
 
 function renderTaskView(task) {
+  const staleChat = $('chatView');
+  if (staleChat) staleChat.remove();
   const [pillText, pillClass] = pillForTask(task);
   $('statePill').className = `state-pill ${pillClass}`;
   $('statePill').textContent = pillText;
   updateCancelButton(task);
   updateResumeButton(task);
+  const chatMessages = task.session && task.session.memory && Array.isArray(task.session.memory.messages)
+    ? task.session.memory.messages : null;
   if (task.status === 'running' && task.mode === 'live') {
     $('timeline').innerHTML = timelineHtml(liveTimeline(task));
+  } else if (task.mode === 'live' && chatMessages && chatMessages.length) {
+    $('timeline').innerHTML = `<div class="timeline-empty">${icon('messages-square')}<span>会话共 ${chatMessages.length} 条消息</span></div>`;
+    $('timeline').after(Object.assign(document.createElement('div'), { id: 'chatView', className: 'chat-view', innerHTML: chatHtml(chatMessages) }));
   } else if (task.mode === 'live' && task.run) {
     $('timeline').innerHTML = timelineHtml(runTimeline(task.run));
   } else {
